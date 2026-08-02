@@ -1,23 +1,21 @@
 RegisterNUICallback("CloseAlerts", function(data, cb)
 	cb("OK")
-	exports['pulsar-mdt']:EmergencyAlertsClose()
+	plsr.EmergencyAlerts:Close()
 end)
 
 RegisterNUICallback("ReceiveAlert", function(data, cb)
 	if data and data.id then
 		if data.panic then
-			exports["pulsar-sounds"]:PlayDistance(15, "panic.ogg", 0.5)
+			plsr.Sounds.Play:Distance(15, "panic.ogg", 0.5)
 		else
-			exports["pulsar-sounds"]:PlayOne("alert_normal.ogg", 0.5)
+			plsr.Sounds.Play:Distance(5, "alert_normal.ogg", 0.5)
 		end
 
 		if data.blip and type(data.blip) == "table" and data.location ~= nil then
 			data.blip.id = string.format("emrg-%s", data.id)
 			data.blip.title = string.format("%s", data.title)
 
-			local eB = exports["pulsar-blips"]:Add(data.blip.id, data.blip.title, data.location, data.blip.icon,
-				data.blip.color,
-				data.blip.size, 2, false, data.blip.flashing)
+			local eB = plsr.Blips:Add(data.blip.id, data.blip.title, data.location, data.blip.icon, data.blip.color, data.blip.size, 2, false, data.blip.flashing)
 			SetBlipFlashes(eB, isPanic)
 			table.insert(_alertBlips, {
 				id = data.blip.id,
@@ -43,7 +41,7 @@ end)
 RegisterNUICallback("RemoveAlert", function(data, cb)
 	if data and data.id then
 		local id = string.format("emrg-%s", data.id)
-		exports["pulsar-blips"]:Remove(id)
+        plsr.Blips:Remove(id)
 
 		for k, v in ipairs(_alertBlips) do
 			if v.id == id then
@@ -56,15 +54,15 @@ RegisterNUICallback("RemoveAlert", function(data, cb)
 end)
 
 RegisterNUICallback("AssignedToAlert", function(data, cb)
-	exports['pulsar-sounds']:UISoundsPlayFrontEnd(-1, "Menu_Accept", "Phone_SoundSet_Default")
+	plsr.UISounds.Play:FrontEnd(-1, "Menu_Accept", "Phone_SoundSet_Default")
 	cb("OK")
 end)
 
 RegisterNUICallback("RouteAlert", function(data, cb)
 	cb("OK")
 	if data.location then
-		exports['pulsar-sounds']:UISoundsPlayFrontEnd(-1, "SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET")
-		exports['pulsar-mdt']:EmergencyAlertsClose()
+		plsr.UISounds.Play:FrontEnd(-1, "SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET")
+		plsr.EmergencyAlerts:Close()
 
 		if data.blip then
 			local f = false
@@ -77,7 +75,7 @@ RegisterNUICallback("RouteAlert", function(data, cb)
 			end
 
 			if not f then
-				local eB = exports["pulsar-blips"]:Add(
+				local eB = plsr.Blips:Add(
 					string.format("emrg-%s", data.id),
 					data.title,
 					data.location,
@@ -97,21 +95,83 @@ RegisterNUICallback("RouteAlert", function(data, cb)
 
 		ClearGpsPlayerWaypoint()
 		SetNewWaypoint(data.location.x, data.location.y)
-		exports["pulsar-hud"]:Notification("info", "Alert Location Marked")
+		plsr.Notification:Info("Alert Location Marked")
 	end
 end)
 
 RegisterNUICallback("ViewCamera", function(data, cb)
 	cb('OK')
 	if data.camera then
-		exports['pulsar-sounds']:UISoundsPlayFrontEnd(-1, "SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET")
-		exports['pulsar-mdt']:EmergencyAlertsClose()
-		exports["pulsar-core"]:ServerCallback("CCTV:ViewGroup", data.camera)
+		plsr.UISounds.Play:FrontEnd(-1, "SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET")
+		plsr.EmergencyAlerts:Close()
+		plsr.Callbacks:ServerCallback("CCTV:ViewGroup", data.camera)
 	end
 end)
 
 RegisterNUICallback("SwapToRadio", function(data, cb)
 	cb("OK")
-	exports['pulsar-sounds']:UISoundsPlayFrontEnd(-1, "SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET")
+	plsr.UISounds.Play:FrontEnd(-1, "SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET")
 	TriggerEvent("Radio:Client:SetChannelFromInput", data.radio)
+end)
+
+-- ---- Dispatch panel actions - always available, no websocket required (see server/alerts/events.lua) ----
+
+RegisterNUICallback("AlertsChangeUnitType", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:ChangeUnitType", data.job, data.primary, data.type)
+end)
+
+RegisterNUICallback("AlertsChangeAvailability", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:ChangeAvailability", data.job, data.primary)
+end)
+
+RegisterNUICallback("AlertsOperateUnder", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:OperateUnder", data.job, data.primary, data.unit)
+end)
+
+RegisterNUICallback("AlertsBreakOff", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:BreakOffUnit", data.job, data.primary, data.unit)
+end)
+
+RegisterNUICallback("AlertsChangeRadioChannel", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:ChangeRadioChannel", data.channel)
+end)
+
+RegisterNUICallback("AlertsChangePursuitMode", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:ChangePursuitMode", data.mode)
+end)
+
+RegisterNUICallback("AlertsUpdateAlertUnits", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:UpdateAlertUnits", data.id, data.units)
+end)
+
+RegisterNUICallback("AlertsRemoveAlert", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:RemoveAlert", data.id)
+end)
+
+RegisterNUICallback("AlertsAddRadioInfo", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:AddRadioInfo", data.radio, data.text)
+end)
+
+RegisterNUICallback("AlertsUpdateRadioInfo", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:UpdateRadioInfo", data.id, data.radio, data.text)
+end)
+
+RegisterNUICallback("AlertsRemoveRadioInfo", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:RemoveRadioInfo", data.id)
+end)
+
+RegisterNUICallback("AlertsLogMessage", function(data, cb)
+	cb("OK")
+	TriggerServerEvent("EmergencyAlerts:Server:LogMessage", data.message)
 end)

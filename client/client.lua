@@ -1,3 +1,5 @@
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
+
 _mdtOpen = false
 _openCd = false -- Prevents spamm open/close
 _settings = {}
@@ -6,16 +8,31 @@ _loggedIn = false
 _mdtLoggedIn = false
 
 local _bodycam = false
+local _ownHeadshotTxd = nil
+local _ownHeadshotHandle = nil
 
-AddEventHandler('onClientResourceStart', function(resource)
-	if resource == GetCurrentResourceName() then
-		Wait(1000)
-		exports["pulsar-kbs"]:Add("gov_mdt", "", "keyboard", "Gov - Open MDT", function()
-			ToggleMDT()
-		end)
-
-		RegisterBadgeCallbacks()
+local function RefreshOwnHeadshot()
+	if _ownHeadshotHandle then
+		UnregisterPedheadshot(_ownHeadshotHandle)
 	end
+
+	_ownHeadshotTxd, _ownHeadshotHandle = CaptureHeadshotTxd(PlayerPedId(), 2500)
+
+	SendNUIMessage({
+		type = "SET_USER",
+		data = {
+			user = plsr.State:Get('character'),
+			headshot = _ownHeadshotTxd,
+		},
+	})
+end
+
+CreateThread(function()
+	plsr.Keybinds:Add("gov_mdt", config.Keybinds.openMdt.default, "keyboard", config.Keybinds.openMdt.label, function()
+		ToggleMDT()
+	end)
+
+	RegisterBadgeCallbacks()
 end)
 
 AddEventHandler("Characters:Client:Spawn", function()
@@ -31,15 +48,16 @@ local usefulData = {
 
 AddEventHandler("Characters:Client:Updated", function(key)
 	if key == -1 or usefulData[key] then
-		if not LocalPlayer.state.Character then
+		if not plsr.State.flags.loggedIn then
 			return
 		end
 
-		local char = LocalPlayer.state.Character:GetData()
+		local char = plsr.State:Get('character')
 		SendNUIMessage({
 			type = "SET_USER",
 			data = {
 				user = char,
+				headshot = _ownHeadshotTxd,
 			},
 		})
 	end
@@ -50,9 +68,17 @@ RegisterNetEvent("MDT:Client:Login", function(points, job, jobPermissions, attor
 
 	if data then
 		for k, v in pairs(data) do
-			exports['pulsar-mdt']:DataSet(k, v)
+			plsr.MDT.Data:Set(k, v)
 		end
 	end
+
+	SendNUIMessage({
+		type = "SET_USER",
+		data = {
+			user = plsr.State:Get('character'),
+			headshot = _ownHeadshotTxd,
+		},
+	})
 
 	SendNUIMessage({
 		type = "JOB_LOGIN",
@@ -63,6 +89,8 @@ RegisterNetEvent("MDT:Client:Login", function(points, job, jobPermissions, attor
 			attorney = attorney,
 		},
 	})
+
+	CreateThread(RefreshOwnHeadshot)
 end)
 
 RegisterNetEvent("MDT:Client:Logout", function()
@@ -84,9 +112,15 @@ RegisterNetEvent("MDT:Client:UpdateJobData", function(job, jobPermissions)
 end)
 
 RegisterNetEvent("Characters:Client:Logout", function()
-	exports['pulsar-mdt']:Close()
-	exports['pulsar-mdt']:BadgesClose()
-	exports['pulsar-mdt']:EmergencyAlertsClose()
+	plsr.MDT:Close()
+	plsr.MDT.Badges:Close()
+	plsr.EmergencyAlerts:Close()
+
+	if _ownHeadshotHandle then
+		UnregisterPedheadshot(_ownHeadshotHandle)
+		_ownHeadshotHandle = nil
+		_ownHeadshotTxd = nil
+	end
 
 	SendNUIMessage({
 		type = "LOGOUT",
@@ -105,9 +139,9 @@ RegisterNetEvent("Characters:Client:Logout", function()
 end)
 
 RegisterNetEvent("UI:Client:Reset", function(manual)
-	exports['pulsar-mdt']:Close()
-	exports['pulsar-mdt']:BadgesClose()
-	exports['pulsar-mdt']:EmergencyAlertsClose()
+	plsr.MDT:Close()
+	plsr.MDT.Badges:Close()
+	plsr.EmergencyAlerts:Close()
 	SendNUIMessage({
 		type = "SET_BODYCAM",
 		data = {
@@ -116,7 +150,7 @@ RegisterNetEvent("UI:Client:Reset", function(manual)
 	})
 
 	if _bodycam and manual then
-		exports["pulsar-sounds"]:PlayDistance(15, "bodycam.ogg", 0.1)
+		plsr.Sounds.Play:Distance(15, "bodycam.ogg", 0.1)
 	end
 end)
 
@@ -128,7 +162,7 @@ AddEventHandler("MDT:Client:ToggleBodyCam", function()
 
 	_bodycam = not _bodycam
 	if _bodycam then
-		exports["pulsar-sounds"]:PlayDistance(15, "bodycam.ogg", 0.05)
+		plsr.Sounds.Play:Distance(15, "bodycam.ogg", 0.05)
 	end
 end)
 
@@ -136,14 +170,14 @@ function ToggleMDT()
 	if not _openCd and _mdtLoggedIn then
 		if not _mdtOpen then
 			_openCd = true
-			exports['pulsar-mdt']:Open()
+			plsr.MDT:Open()
 
 			CreateThread(function()
-				Wait(2000)
+				Wait(config.MDT.toggleCooldownMs)
 				_openCd = false
 			end)
 		else
-			exports['pulsar-mdt']:Close()
+			plsr.MDT:Close()
 		end
 	end
 end

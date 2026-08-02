@@ -1,16 +1,18 @@
-_bolos = {}
-_breakpoints = {
-	reduction = 50,
-	license = 20,
-}
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/server.lua"))()
+local sharedConfig = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
 
-local governmentJobs = {
-	police = true,
-	government = true,
-	ems = true,
-	tow = true,
-	prison = true,
-}
+_MDT = _MDT or {}
+_bolos = {}
+_breakpoints = config.Points
+
+_governmentJobs = sharedConfig.Jobs.portals
+_permissions = sharedConfig.Permissions
+_qualifications = sharedConfig.Qualifications
+
+local governmentJobs = {}
+for _, jobId in ipairs(sharedConfig.Jobs.dutyTriggers) do
+	governmentJobs[jobId] = true
+end
 
 _onDutyUsers = {}
 _onDutyLawyers = {}
@@ -21,18 +23,18 @@ _governmentJobData = {}
 
 local sentencedSuspects = {}
 
-AddEventHandler('onResourceStart', function(resource)
-	if resource == GetCurrentResourceName() then
-		Wait(1000)
-		RegisterMiddleware()
-		Startup()
-		exports['pulsar-core']:VersionCheck('PulsarFW/pulsar-mdt')
-		TriggerEvent("MDT:Server:RegisterCallbacks")
+CreateThread(function()
+	RegisterChatCommands()
+	RegisterMiddleware()
+	Startup()
+	TriggerEvent("MDT:Server:RegisterCallbacks")
 
-		Wait(2500)
-		UpdateMDTJobsData()
-		RegisterChatCommands()
-	end
+	Wait(2500)
+	UpdateMDTJobsData()
+end)
+
+AddEventHandler("Proxy:Shared:RegisterReady", function()
+	exports["pulsar_core"]:RegisterComponent("MDT", _MDT)
 end)
 
 AddEventHandler("Characters:Server:PlayerLoggedOut", function(source, cData)
@@ -44,10 +46,10 @@ AddEventHandler("Characters:Server:PlayerDropped", function(source, cData)
 end)
 
 function RegisterMiddleware()
-	exports['pulsar-core']:MiddlewareAdd('Characters:Spawning', function(source)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+    plsr.Middleware:Add('Characters:Spawning', function(source)
+		local char = plsr.Fetch:CharacterSource(source)
 		if char and char:GetData("Attorney") then
-			SetTimeout(5000, function()
+			Citizen.SetTimeout(5000, function()
 				TriggerClientEvent("MDT:Client:Login", source, nil, nil, nil, true, {
 					governmentJobs = _governmentJobs,
 					charges = _charges,
@@ -56,12 +58,12 @@ function RegisterMiddleware()
 				_onDutyLawyers[source] = char:GetData('SID')
 			end)
 		end
-	end, 50)
+    end, 50)
 end
 
 function UpdateMDTJobsData()
 	local newData = {}
-	local allJobData = exports['pulsar-jobs']:GetAll()
+	local allJobData = plsr.Jobs:GetAll()
 	for k, v in ipairs(_governmentJobs) do
 		newData[v] = allJobData[v]
 	end
@@ -78,11 +80,11 @@ end)
 
 AddEventHandler('Job:Server:DutyAdd', function(dutyData, source, SID)
 	if governmentJobs[dutyData.Id] then
-		local job = exports['pulsar-jobs']:HasJob(source, dutyData.Id)
+		local job = plsr.Jobs.Permissions:HasJob(source, dutyData.Id)
 		if job then
 			_onDutyUsers[source] = job.Id
-			local permissions = exports['pulsar-jobs']:GetPermissionsFromJob(source, job.Id)
-
+			local permissions = plsr.Jobs.Permissions:GetPermissionsFromJob(source, job.Id)
+	
 			TriggerClientEvent("MDT:Client:Login", source, _breakpoints, job, permissions, false, {
 				governmentJobs = _governmentJobs,
 				charges = _charges,
@@ -92,7 +94,7 @@ AddEventHandler('Job:Server:DutyAdd', function(dutyData, source, SID)
 				bolos = _bolos,
 			})
 
-			local char = exports['pulsar-characters']:FetchCharacterSource(source)
+			local char = plsr.Fetch:CharacterSource(source)
 			if char and job.Id == "government" then
 				_dojWorkers[source] = {
 					First = char:GetData("First"),
@@ -110,11 +112,11 @@ AddEventHandler('Job:Server:DutyAdd', function(dutyData, source, SID)
 end)
 
 AddEventHandler('Jobs:Server:JobUpdate', function(source)
-	local dutyData = exports['pulsar-jobs']:DutyGet(source)
+	local dutyData = plsr.Jobs.Duty:Get(source)
 	if dutyData and governmentJobs[dutyData.Id] then
-		local job = exports['pulsar-jobs']:HasJob(source, dutyData.Id)
+		local job = plsr.Jobs.Permissions:HasJob(source, dutyData.Id)
 		if job then
-			local permissions = exports['pulsar-jobs']:GetPermissionsFromJob(source, job.Id)
+			local permissions = plsr.Jobs.Permissions:GetPermissionsFromJob(source, job.Id)
 			TriggerClientEvent('MDT:Client:UpdateJobData', source, job, permissions)
 		end
 	end
@@ -136,21 +138,20 @@ function CheckMDTPermissions(source, permission, jobId)
 		end
 
 		if type(permission) == 'string' then
-			local hasPerm = exports['pulsar-jobs']
-			exports['pulsar-jobs']:HasPermissionInJob(source, mdtUser, permission)
+			local hasPerm = plsr.Jobs.Permissions:HasPermissionInJob(source, mdtUser, permission)
 			if hasPerm then
 				return true, mdtUser
 			end
 		elseif type(permission) == 'table' then
-			local jobPermissions = exports['pulsar-jobs']:GetPermissionsFromJob(source, mdtUser)
+			local jobPermissions = plsr.Jobs.Permissions:GetPermissionsFromJob(source, mdtUser)
 			for k, v in ipairs(permission) do
 				if jobPermissions[v] then
 					return true, mdtUser
 				end
 			end
 		end
-
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+		
+		local char = plsr.Fetch:CharacterSource(source)
 		if char:GetData('MDTSystemAdmin') then -- They have all permissions
 			return true, mdtUser
 		end
@@ -160,7 +161,7 @@ end
 
 RegisterNetEvent('MDT:Server:OpenPublicRecords', function()
 	local src = source
-	local dutyData = exports['pulsar-jobs']:DutyGet(src)
+	local dutyData = plsr.Jobs.Duty:Get(src)
 
 	if not _onDutyUsers[src] then
 		TriggerClientEvent("MDT:Client:SetMultipleData", src, {
@@ -192,13 +193,11 @@ RegisterNetEvent('MDT:Server:OpenDOCPublic', function()
 end)
 
 AddEventHandler("MDT:Server:RegisterCallbacks", function()
-	exports["pulsar-core"]:RegisterServerCallback("MDT:GetHomeData", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:GetHomeData", function(source, data, cb)
 		local gJob = _onDutyUsers[source]
-		local warrants = MySQL.query.await(
-			"SELECT id, state, report, suspect, title, creatorSID, creatorName, creatorCallsign, issued, expires FROM mdt_warrants WHERE state = ? AND expires > NOW() ORDER BY issued DESC LIMIT 5",
-			{
-				"active"
-			})
+		local warrants = MySQL.query.await("SELECT id, state, report, suspect, title, creatorSID, creatorName, creatorCallsign, issued, expires FROM mdt_warrants WHERE state = ? AND expires > NOW() ORDER BY issued DESC LIMIT 5", {
+			"active"
+		})
 
 		local notices
 		if gJob then
@@ -225,11 +224,11 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 		})
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:IssueWarrant", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:IssueWarrant", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 
 		if char and CheckMDTPermissions(source, false) and data.report and data.suspect and data.suspect.id then
-			local id = exports['pulsar-mdt']:WarrantsCreate(data.report, data.suspect, data.notes, {
+			local id = plsr.MDT.Warrants:Create(data.report, data.suspect, data.notes, {
 				SID = char:GetData("SID"),
 				First = char:GetData("First"),
 				Last = char:GetData("Last"),
@@ -237,13 +236,12 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 			})
 
 			if id then
-				MySQL.query.await("UPDATE mdt_reports_people SET warrant = ? WHERE type = ? AND SID = ? AND report = ?",
-					{
-						id,
-						"suspect",
-						data.suspect.SID,
-						data.report,
-					})
+				MySQL.query.await("UPDATE mdt_reports_people SET warrant = ? WHERE type = ? AND SID = ? AND report = ?", {
+					id,
+					"suspect",
+					data.suspect.SID,
+					data.report,
+				})
 
 				cb(true)
 				return
@@ -253,8 +251,8 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 		cb(false)
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:SentencePlayer", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:SentencePlayer", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 
 		if CheckMDTPermissions(source, false) and data.report and not data.data.sentenced then
 			if not sentencedSuspects[data.report] then
@@ -264,21 +262,20 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 
 			if data.data.SID and not sentencedSuspects[data.report][data.data.SID] then
 				table.insert(transactions, {
-					query =
-					"UPDATE mdt_reports_people SET sentenced = ?, sentencedAt = NOW(), points = ?, fine = ?, jail = ?, parole = ?, reduction = ?, revoked = ?, doc = ? WHERE type = ? AND SID = ? AND report = ? AND sentenced = ?",
+					query = "UPDATE mdt_reports_people SET sentenced = ?, sentencedAt = NOW(), points = ?, fine = ?, jail = ?, parole = ?, reduction = ?, revoked = ?, doc = ? WHERE type = ? AND SID = ? AND report = ? AND sentenced = ?",
 					values = {
 						1,
 						data.points,
 						data.fine,
 						data.jail,
-						data.parole and data.parole.parole or 0,
+						data.parole?.parole or 0,
 						json.encode({
 							type = data.sentence.type,
 							value = data.sentence.value,
 						}),
 						json.encode(data.sentence.revoke),
 						data.sentence.doc and 1 or 0,
-
+						
 						"suspect",
 						data.data.SID,
 						data.report,
@@ -288,8 +285,7 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 
 				if data.parole ~= nil then
 					table.insert(transactions, {
-						query =
-						"INSERT INTO character_parole (SID, end, total, parole, sentence, fine) VALUES (?, FROM_UNIXTIME(?), ?, ?, ?, ?) ON DUPLICATE KEY UPDATE end = VALUES(end), total = VALUES(total), parole = VALUES(parole), sentence = VALUES(sentence), fine = VALUES(fine)",
+						query = "INSERT INTO character_parole (SID, end, total, parole, sentence, fine) VALUES (?, FROM_UNIXTIME(?), ?, ?, ?, ?) ON DUPLICATE KEY UPDATE end = VALUES(end), total = VALUES(total), parole = VALUES(parole), sentence = VALUES(sentence), fine = VALUES(fine)",
 						values = {
 							data.data.SID,
 							math.ceil(data.parole["end"]),
@@ -313,50 +309,75 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 				MySQL.transaction.await(transactions)
 
 				if data.sentence.revoke or data.points > 0 then
-					local character = MySQL.single.await('SELECT Licenses FROM characters WHERE SID = ?',
-						{ data.data.SID })
-					if character then
-						local licenses = json.decode(character.Licenses) or {}
+					local needsUpdate = false
+					local pointsInc = 0
+					local revokeSet = {}
 
-						if data.points > 0 then
-							licenses.Drivers = licenses.Drivers or {}
-							licenses.Drivers.Points = (licenses.Drivers.Points or 0) + data.points
-						end
+					if data.points > 0 then
+						needsUpdate = true
+						pointsInc = data.points
+					end
 
-						if data.sentence.revoke then
-							for k, v in pairs(data.sentence.revoke) do
-								if v then
-									licenses[k] = licenses[k] or {}
-									if k == 'drivers' then
-										licenses.Drivers = licenses.Drivers or {}
-										licenses.Drivers.Active = false
-										licenses.Drivers.Suspended = true
-									elseif k == 'weapons' then
-										licenses.Weapons = licenses.Weapons or {}
-										licenses.Weapons.Active = false
-										licenses.Weapons.Suspended = true
-									elseif k == 'hunting' then
-										licenses.Hunting = licenses.Hunting or {}
-										licenses.Hunting.Active = false
-										licenses.Hunting.Suspended = true
-									elseif k == 'fishing' then
-										licenses.Fishing = licenses.Fishing or {}
-										licenses.Fishing.Active = false
-										licenses.Fishing.Suspended = true
-									end
+					if data.sentence.revoke then
+						for k, v in pairs(data.sentence.revoke) do
+							if v then
+								needsUpdate = true
+
+								if k == 'drivers' then
+									revokeSet.Drivers = { Active = false, Suspended = true }
+								elseif k == 'weapons' then
+									revokeSet.Weapons = { Active = false, Suspended = true }
+								elseif k == 'hunting' then
+									revokeSet.Hunting = { Active = false, Suspended = true }
+								elseif k == 'fishing' then
+									revokeSet.Fishing = { Active = false, Suspended = true }
 								end
 							end
 						end
+					end
 
-						MySQL.update.await('UPDATE characters SET Licenses = ? WHERE SID = ?', {
-							json.encode(licenses),
-							data.data.SID
-						})
+					if needsUpdate then
+						local p = promise.new()
+						plsr.Database:Single("SELECT `id`, `data` FROM `characters` WHERE `sid` = ? AND `deleted` = 0", { data.data.SID }, function(success, row)
+							if not success or row == nil then
+								p:resolve(false)
+								return
+							end
+							local ok, existing = pcall(json.decode, row.data)
+							if not ok or type(existing) ~= "table" then
+								p:resolve(false)
+								return
+							end
 
-						local char = exports['pulsar-characters']:FetchBySID(data.data.SID)
-						if char then
-							char:SetData('Licenses', licenses)
-						end
+							if not existing.Licenses then
+								existing.Licenses = {}
+							end
+							if pointsInc ~= 0 then
+								if not existing.Licenses.Drivers then
+									existing.Licenses.Drivers = {}
+								end
+								existing.Licenses.Drivers.Points = (existing.Licenses.Drivers.Points or 0) + pointsInc
+							end
+							for licenseType, flags in pairs(revokeSet) do
+								if not existing.Licenses[licenseType] then
+									existing.Licenses[licenseType] = {}
+								end
+								existing.Licenses[licenseType].Active = flags.Active
+								existing.Licenses[licenseType].Suspended = flags.Suspended
+							end
+
+							plsr.Database:Update("UPDATE `characters` SET `data` = ? WHERE `id` = ?", { json.encode(existing), row.id }, function(updateSuccess)
+								if updateSuccess then
+									local char = plsr.Fetch:SID(data.data.SID)
+									if char then
+										char:SetData('Licenses', existing.Licenses)
+									end
+								end
+								p:resolve(updateSuccess)
+							end)
+						end)
+
+						Citizen.Await(p)
 					end
 				end
 				cb(true)
@@ -368,11 +389,11 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:OverturnSentence", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:OverturnSentence", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 
 		if CheckMDTPermissions(source, "DOJ_OVERTURN_CHARGES") and data.report and data.SID then
-			exports['pulsar-core']:LoggerWarn(
+			plsr.Logger:Warn(
 				"MDT",
 				string.format(
 					"%s %s (%s) Overturned Charges From State ID %s on Report %s",
@@ -392,14 +413,13 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 				}
 			)
 
-			MySQL.query.await(
-				"UPDATE mdt_reports_people SET type = ? WHERE report = ? AND type = ? AND SID = ? AND sentenced = ?", {
-					"suspectOverturned",
-					data.report,
-					"suspect",
-					data.SID,
-					1
-				})
+			MySQL.query.await("UPDATE mdt_reports_people SET type = ? WHERE report = ? AND type = ? AND SID = ? AND sentenced = ?", {
+				"suspectOverturned",
+				data.report,
+				"suspect",
+				data.SID,
+				1
+			})
 
 			cb(true)
 		else
@@ -407,149 +427,158 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:RosterView", function(source, data, cb)
-		local query = [[
-			SELECT Mugshot, First, Last, SID, Callsign, Jobs
-			FROM characters
-		]]
+	plsr.Callbacks:RegisterServerCallback("MDT:RosterView", function(source, data, cb)
+		plsr.Database:Query(
+			"SELECT `data` FROM `characters` WHERE JSON_CONTAINS(JSON_EXTRACT(`data`, '$.Jobs'), JSON_OBJECT('Id', ?), '$') AND `deleted` = 0",
+			{ data.job },
+			function(success, rows)
+				if not success then
+					cb({})
+					return
+				end
 
-		MySQL.Async.fetchAll(query, {}, function(results)
-			if results then
-				local formattedResults = {}
-				for _, result in ipairs(results) do
-					local jobs = json.decode(result.Jobs)
-					for _, job in ipairs(jobs) do
-						if job.Id == data.job then
-							table.insert(formattedResults, {
-								Mugshot = result.Mugshot,
-								First = result.First,
-								Last = result.Last,
-								SID = result.SID,
-								Callsign = result.Callsign,
-								Jobs = jobs
-							})
-							break
+				local results = {}
+				for k, row in ipairs(rows) do
+					local ok, v = pcall(json.decode, row.data)
+					if ok and type(v) == "table" then
+						local matchedJob = nil
+						for _, j in ipairs(v.Jobs or {}) do
+							if j.Id == data.job then
+								matchedJob = j
+								break
+							end
 						end
+						table.insert(results, {
+							Mugshot = v.Mugshot,
+							First = v.First,
+							Last = v.Last,
+							SID = v.SID,
+							Callsign = v.Callsign,
+							Jobs = matchedJob and { matchedJob } or {},
+						})
 					end
 				end
-				cb(formattedResults)
-			else
-				cb({})
+				cb(results)
 			end
-		end)
+		)
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:RosterSelect", function(source, data, cb)
-		local query = [[
-			SELECT Mugshot, First, Last, SID, Callsign, MDTSuspension, MDTSystemAdmin, Qualifications, Phone, TimeClockedOn, LastClockOn, Jobs
-			FROM characters
-			WHERE SID = @sid
-		]]
-
-		local params = {
-			['@sid'] = data.person
-		}
-
-		MySQL.Async.fetchAll(query, params, function(results)
-			if results and #results > 0 then
-				local character = results[1]
-				local jobs = json.decode(character.Jobs)
-				local jobFound = false
-
-				if character.Qualifications then
-					character.Qualifications = json.decode(character.Qualifications)
-					if type(character.Qualifications) == "table" and not character.Qualifications[1] then
-						local quals = {}
-						for k, v in pairs(character.Qualifications) do
-							table.insert(quals, k)
-						end
-						character.Qualifications = quals
-					elseif type(character.Qualifications) ~= "table" then
-						character.Qualifications = {}
-					end
-				end
-
-				if character.MDTSuspension then
-					character.MDTSuspension = json.decode(character.MDTSuspension)
-				end
-
-				for _, job in ipairs(jobs) do
-					if job.Id == data.job then
-						jobFound = job
-						break
-					end
-				end
-
-				if jobFound then
-					character.Jobs = { jobFound }
-					cb(character)
-				else
-					cb(false)
-				end
-			else
+	plsr.Callbacks:RegisterServerCallback("MDT:RosterSelect", function(source, data, cb)
+		plsr.Database:Single("SELECT `data` FROM `characters` WHERE `sid` = ? AND `deleted` = 0", { data.person }, function(success, row)
+			if not success or row == nil then
 				cb(false)
+				return
 			end
+			local ok, v = pcall(json.decode, row.data)
+			if not ok or type(v) ~= "table" then
+				cb(false)
+				return
+			end
+
+			local matchedJob = nil
+			for _, j in ipairs(v.Jobs or {}) do
+				if j.Id == data.job then
+					matchedJob = j
+					break
+				end
+			end
+
+			if not matchedJob then
+				cb(false)
+				return
+			end
+
+			cb({
+				Mugshot = v.Mugshot,
+				First = v.First,
+				Last = v.Last,
+				SID = v.SID,
+				Callsign = v.Callsign,
+				MDTSuspension = v.MDTSuspension,
+				MDTSystemAdmin = v.MDTSystemAdmin,
+				Qualifications = v.Qualifications,
+				Phone = v.Phone,
+				TimeClockedOn = v.TimeClockedOn,
+				LastClockOn = v.LastClockOn,
+				Jobs = { matchedJob },
+			})
 		end)
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:RevokeLicenseSuspension", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:RevokeLicenseSuspension", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 
 		if CheckMDTPermissions(source, 'REVOKE_LICENSE_SUSPENSIONS') then
-			local character = MySQL.single.await('SELECT Licenses FROM characters WHERE SID = ?', { data.SID })
-			if character then
-				local licenses = json.decode(character.Licenses) or {}
-				local canUpdate = false
+			local canUpdate = false
+			local unsuspendTypes = {}
 
-				for k, v in pairs(data.unsuspend) do
-					if v then
-						canUpdate = true
-						licenses[k] = licenses[k] or {}
-						licenses[k].Active = false
-						licenses[k].Suspended = false
+			for k, v in pairs(data.unsuspend) do
+				if v then
+					canUpdate = true
+					table.insert(unsuspendTypes, k)
+				end
+			end
 
-						if k == 'Drivers' then
-							licenses.Drivers = licenses.Drivers or {}
-							licenses.Drivers.Active = true
-							licenses.Drivers.Points = 0
+			if canUpdate then
+				plsr.Logger:Warn(
+					"MDT",
+					string.format(
+						"%s %s (%s) Revoked License Suspensions: %s From State ID %s",
+						char:GetData("First"),
+						char:GetData("Last"),
+						char:GetData("SID"),
+						json.encode(data.unsuspend),
+						data.SID
+					),
+					{
+						console = true,
+						file = true,
+						database = true,
+						discord = {
+							embed = true,
+						},
+					}
+				)
+
+				plsr.Database:Single("SELECT `id`, `data` FROM `characters` WHERE `sid` = ? AND `deleted` = 0", { data.SID }, function(success, row)
+					if not success or row == nil then
+						cb(false)
+						return
+					end
+					local ok, existing = pcall(json.decode, row.data)
+					if not ok or type(existing) ~= "table" then
+						cb(false)
+						return
+					end
+					if not existing.Licenses then
+						existing.Licenses = {}
+					end
+
+					for _, licenseType in ipairs(unsuspendTypes) do
+						if not existing.Licenses[licenseType] then
+							existing.Licenses[licenseType] = {}
+						end
+						existing.Licenses[licenseType].Active = false
+						existing.Licenses[licenseType].Suspended = false
+
+						if licenseType == 'Drivers' then
+							existing.Licenses.Drivers.Active = true
+							existing.Licenses.Drivers.Points = 0
 						end
 					end
-				end
 
-				if canUpdate then
-					exports['pulsar-core']:LoggerWarn(
-						"MDT",
-						string.format(
-							"%s %s (%s) Revoked License Suspensions: %s From State ID %s",
-							char:GetData("First"),
-							char:GetData("Last"),
-							char:GetData("SID"),
-							json.encode(data.unsuspend),
-							data.SID
-						),
-						{
-							console = true,
-							file = true,
-							database = true,
-							discord = {
-								embed = true,
-							},
-						}
-					)
-
-					MySQL.update.await('UPDATE characters SET Licenses = ? WHERE SID = ?', {
-						json.encode(licenses),
-						data.SID
-					})
-
-					local char = exports['pulsar-characters']:FetchBySID(data.SID)
-					if char then
-						char:SetData('Licenses', licenses)
-					end
-					cb(licenses)
-				else
-					cb(false)
-				end
+					plsr.Database:Update("UPDATE `characters` SET `data` = ? WHERE `id` = ?", { json.encode(existing), row.id }, function(updateSuccess)
+						if updateSuccess then
+							local target = plsr.Fetch:SID(data.SID)
+							if target then
+								target:SetData('Licenses', existing.Licenses)
+							end
+							cb(existing.Licenses)
+						else
+							cb(false)
+						end
+					end)
+				end)
 			else
 				cb(false)
 			end
@@ -558,11 +587,11 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:RemoveLicensePoints", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:RemoveLicensePoints", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 
 		if CheckMDTPermissions(source, 'REVOKE_LICENSE_SUSPENSIONS') and data.SID and data.newPoints then
-			exports['pulsar-core']:LoggerWarn(
+			plsr.Logger:Warn(
 				"MDT",
 				string.format(
 					"%s %s (%s) Changed License Points of State ID %s to %s",
@@ -582,44 +611,54 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 				}
 			)
 
-			local character = MySQL.single.await('SELECT Licenses FROM characters WHERE SID = ?', { data.SID })
-			if character then
-				local licenses = json.decode(character.Licenses) or {}
-				licenses.Drivers = licenses.Drivers or {}
-				licenses.Drivers.Points = data.newPoints
-
-				MySQL.update.await('UPDATE characters SET Licenses = ? WHERE SID = ?', {
-					json.encode(licenses),
-					data.SID
-				})
-
-				local char = exports['pulsar-characters']:FetchBySID(data.SID)
-				if char then
-					char:SetData('Licenses', licenses)
+			plsr.Database:Single("SELECT `id`, `data` FROM `characters` WHERE `sid` = ? AND `deleted` = 0", { data.SID }, function(success, row)
+				if not success or row == nil then
+					cb(false)
+					return
 				end
-				cb(licenses)
-			else
-				cb(false)
-			end
+				local ok, existing = pcall(json.decode, row.data)
+				if not ok or type(existing) ~= "table" then
+					cb(false)
+					return
+				end
+				if not existing.Licenses then
+					existing.Licenses = {}
+				end
+				if not existing.Licenses.Drivers then
+					existing.Licenses.Drivers = {}
+				end
+				existing.Licenses.Drivers.Points = data.newPoints
+
+				plsr.Database:Update("UPDATE `characters` SET `data` = ? WHERE `id` = ?", { json.encode(existing), row.id }, function(updateSuccess)
+					if updateSuccess then
+						local target = plsr.Fetch:SID(data.SID)
+						if target then
+							target:SetData('Licenses', existing.Licenses)
+						end
+						cb(existing.Licenses)
+					else
+						cb(false)
+					end
+				end)
+			end)
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:ClearCriminalRecord", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:ClearCriminalRecord", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 
 		if char and CheckMDTPermissions(source, 'EXPUNGEMENT') and data.SID then
-			local u = MySQL.query.await(
-				"UPDATE mdt_reports_people SET expunged = ? WHERE type = ? AND sentenced = ? AND SID = ?", {
-					1,
-					"suspect",
-					1,
-					data.SID
-				})
+			local u = MySQL.query.await("UPDATE mdt_reports_people SET expunged = ? WHERE type = ? AND sentenced = ? AND SID = ?", {
+				1,
+				"suspect",
+				1,
+				data.SID
+			})
 
 			if u and u.affectedRows > 0 then
-				exports['pulsar-core']:LoggerWarn(
+				plsr.Logger:Warn(
 					"MDT",
 					string.format(
 						"%s %s (%s) Expunged %s Incidents From State ID %s",
@@ -645,47 +684,51 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:OpenEvidenceLocker", function(source, reportId, cb)
-	    local char = exports['pulsar-characters']:FetchCharacterSource(source)
-	    if char and (
-	        exports['pulsar-jobs']:HasJob(source, 'police', nil, nil, nil, true) or
-	        exports['pulsar-jobs']:HasJob(source, 'ems', nil, nil, nil, true) or
-	        exports['pulsar-jobs']:HasJob(source, 'prison', nil, nil, nil, true)
-	    ) then
-	        exports.ox_inventory:forceOpenInventory(source, 'policeevidence', reportId)
-	        cb(true)
-	    else
-	        cb(false)
-	    end
+	plsr.Callbacks:RegisterServerCallback("MDT:OpenEvidenceLocker", function(source, caseNum, cb)
+		if
+			plsr.Jobs.Permissions:HasJob(source, 'police', nil, nil, nil, true)
+			or plsr.Jobs.Permissions:HasJob(source, 'ems', nil, nil, nil, true)
+			or plsr.Jobs.Permissions:HasJob(source, 'prison', nil, nil, nil, true)
+		then
+			plsr.Callbacks:ClientCallback(source, "Inventory:Compartment:Open", {
+				invType = 44,
+				owner = ("evidencelocker:%s"):format(caseNum),
+			}, function()
+				plsr.Inventory:OpenSecondary(source, 44, ("evidencelocker:%s"):format(caseNum))
+			end)
+			cb(true)
+		else
+			cb(false)
+		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:OpenPersonalLocker", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
-		if char and (exports['pulsar-jobs']:HasJob(source, 'police') or exports['pulsar-jobs']:HasJob(source, 'ems') or exports['pulsar-jobs']:HasJob(source, 'prison')) then
+	plsr.Callbacks:RegisterServerCallback("MDT:OpenPersonalLocker", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
+		if char and (plsr.Jobs.Permissions:HasJob(source, 'police') or plsr.Jobs.Permissions:HasJob(source, 'ems') or plsr.Jobs.Permissions:HasJob(source, 'prison')) then
 			cb(true)
 
-			exports["pulsar-core"]:ClientCallback(source, "Inventory:Compartment:Open", {
+			plsr.Callbacks:ClientCallback(source, "Inventory:Compartment:Open", {
 				invType = 45,
 				owner = ("pdlocker:%s"):format(char:GetData('SID')),
 			}, function()
-				exports.ox_inventory:OpenSecondary(source, 45, ("pdlocker:%s"):format(char:GetData('SID')))
+				plsr.Inventory:OpenSecondary(source, 45, ("pdlocker:%s"):format(char:GetData('SID')))
 			end)
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:DOCGetPrisoners", function(source, data, cb)
-		cb(exports['pulsar-jail']:GetPrisoners())
+	plsr.Callbacks:RegisterServerCallback("MDT:DOCGetPrisoners", function(source, data, cb)
+		cb(plsr.Jail:GetPrisoners())
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:DOCReduceSentence", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:DOCReduceSentence", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 		if char and CheckMDTPermissions(source, 'DOC_REDUCTION') and data.reduction then
-			local target = exports['pulsar-characters']:FetchBySID(data.SID)
+			local target = plsr.Fetch:SID(data.SID)
 			if target then
-				if exports['pulsar-jail']:Reduce(target:GetData("Source"), data.reduction) then
-					exports['pulsar-core']:LoggerWarn(
+				if plsr.Jail:Reduce(target:GetData("Source"), data.reduction) then
+					plsr.Logger:Warn(
 						"MDT",
 						string.format(
 							"%s %s (%s) Reduced %s %s (%s) Prison Sentence By %s Months",
@@ -719,28 +762,23 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 	end)
 
 	local vCooldowns = {}
-	exports["pulsar-core"]:RegisterServerCallback("MDT:DOCRequestVisitation", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:DOCRequestVisitation", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 		if char and (vCooldowns[source] == nil or vCooldowns[source] <= os.time()) and data.SID then
-			local target = exports['pulsar-characters']:FetchBySID(data.SID)
+			local target = plsr.Fetch:SID(data.SID)
 			if target then
 				local jailed = target:GetData("Jailed")
 				if jailed and not jailed.Released then
-					local dutyData = exports['pulsar-jobs']:DutyGetDutyData("prison")
+					local dutyData = plsr.Jobs.Duty:GetDutyData("prison")
 					if dutyData and dutyData.Count > 0 then
-						exports['pulsar-mdt']:EmergencyAlertsCreate(
+						local lobby = config.DOC.visitationLobby
+						plsr.EmergencyAlerts:Create(
 							"DOC",
 							"Visition Request from Lobby",
 							"doc_alerts",
+							{ street1 = lobby.street1, x = lobby.coords.x, y = lobby.coords.y, z = lobby.coords.z },
 							{
-								street1 = "Bolingbroke Penitentiary",
-								x = 1852.444,
-								y = 2585.973,
-								z = 45.672
-							},
-							{
-								details = string.format("Request to Visit %s %s (%s)", target:GetData("First"),
-									target:GetData("Last"), target:GetData("SID")),
+								details = string.format("Request to Visit %s %s (%s)", target:GetData("First"), target:GetData("Last"), target:GetData("SID")),
 								icon = "info",
 							},
 							false,
@@ -757,10 +795,10 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 						})
 					end
 				else
-					cb({ success = false })
+					cb({ success = false })	
 				end
 			else
-				cb({ success = false })
+				cb({ success = false })	
 			end
 		else
 			cb({
@@ -769,46 +807,4 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 			})
 		end
 	end)
-end)
-
-exports.ox_inventory:registerHook('buyItem', function(payload)
-	if payload.itemName and payload.metadata.serial and (payload.metadata.registered or payload.fromSlot.metadata.registered) then
-		local char = exports['pulsar-characters']:FetchCharacterSource(payload.source)
-
-		if char then
-			local firstName = char:GetData('First')
-			local lastName = char:GetData('Last')
-			local sid = char:GetData('SID')
-
-			exports['pulsar-mdt']:FirearmRegister(
-				payload.metadata.serial,
-				payload.itemName,
-				sid,
-				firstName .. ' ' .. lastName
-			)
-		end
-	end
-
-	return true
-end)
-
-exports.ox_inventory:registerHook('createItem', function(payload)
-	if payload.item.name:find('WEAPON_') and payload.metadata.serial then
-		local char = exports['pulsar-characters']:FetchCharacterSource(payload.inventoryId)
-
-		if char then
-			local firstName = char:GetData('First')
-			local lastName = char:GetData('Last')
-			local sid = char:GetData('SID')
-
-			exports['pulsar-mdt']:FirearmRegister(
-				payload.metadata.serial,
-				payload.item.name,
-				sid,
-				firstName .. ' ' .. lastName
-			)
-		end
-	end
-
-	return true
 end)

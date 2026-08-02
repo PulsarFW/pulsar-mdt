@@ -1,57 +1,56 @@
-exports("LibraryCreate", function(label, link, job, workplace)
-    local inserted = MySQL.insert.await("INSERT INTO mdt_library (label, link, job, workplace) VALUES (?, ?, ?, ?)",
-        {
+_MDT.Library = {
+	Create = function(self, label, link, job, workplace)
+        local inserted = MySQL.insert.await("INSERT INTO mdt_library (label, link, job, workplace) VALUES (?, ?, ?, ?)", {
             label,
             link,
             job,
             workplace and workplace or nil,
         })
 
-    return inserted
-end)
+        return inserted
+    end,
+	Delete = function(self, id)
+        MySQL.query.await("DELETE FROM mdt_library WHERE id = ?", {
+            id
+        })
 
-exports("LibraryDelete", function(id)
-    MySQL.query.await("DELETE FROM mdt_library WHERE id = ?", {
-        id
-    })
+        return true
+    end
+}
 
-    return true
-end)
 
 AddEventHandler("MDT:Server:RegisterCallbacks", function()
-    exports["pulsar-core"]:RegisterServerCallback("MDT:AddLibraryDocument", function(source, data, cb)
-        if CheckMDTPermissions(source, true) then
-            cb(exports['pulsar-mdt']:LibraryCreate(data.label, data.link, data.job, data.workplace))
-        else
-            cb(false)
-        end
-    end)
+	plsr.Callbacks:RegisterServerCallback("MDT:AddLibraryDocument", function(source, data, cb)
+		if CheckMDTPermissions(source, true) then
+			cb(plsr.MDT.Library:Create(data.label, data.link, data.job, data.workplace))
+		else
+			cb(false)
+		end
+	end)
 
-    exports["pulsar-core"]:RegisterServerCallback("MDT:RemoveLibraryDocument", function(source, data, cb)
-        if CheckMDTPermissions(source, true) then
-            cb(exports['pulsar-mdt']:LibraryDelete(data.id))
-        else
-            cb(false)
-        end
-    end)
+	plsr.Callbacks:RegisterServerCallback("MDT:RemoveLibraryDocument", function(source, data, cb)
+		if CheckMDTPermissions(source, true) then
+			cb(plsr.MDT.Library:Delete(data.id))
+		else
+			cb(false)
+		end
+	end)
 
-    exports["pulsar-core"]:RegisterServerCallback("MDT:GetLibraryDocuments", function(source, data, cb)
-        local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:GetLibraryDocuments", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
         if char then
-            local dutyData = exports['pulsar-jobs']:DutyGet(source)
+            local dutyData = plsr.Jobs.Duty:Get(source)
 
             if CheckMDTPermissions(source, true) then
                 local res = MySQL.query.await("SELECT id, label, link FROM mdt_library ORDER BY label", {})
 
                 cb(res)
             elseif dutyData then
-                local res = MySQL.query.await(
-                    "SELECT id, label, link FROM mdt_library WHERE (job = ? AND workplace IS NULL) OR (job = ? AND workplace = ?) ORDER BY label",
-                    {
-                        dutyData.Id,
-                        dutyData.Id,
-                        dutyData.WorkplaceId,
-                    })
+                local res = MySQL.query.await("SELECT id, label, link FROM mdt_library WHERE (job = ? AND workplace IS NULL) OR (job = ? AND workplace = ?) ORDER BY label", {
+                    dutyData.Id,
+                    dutyData.Id,
+                    dutyData.WorkplaceId,
+                })
                 cb(res)
             else
                 cb({})
@@ -59,5 +58,5 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
         else
             cb({})
         end
-    end)
+	end)
 end)

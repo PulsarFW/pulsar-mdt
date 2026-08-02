@@ -7,7 +7,7 @@ function StartAETrackingThreads()
             for k, v in pairs(emergencyAlertsData) do
                 if v ~= nil and v.Source and GetPlayerEndpoint(v.Source) then
                     if not v.TrackerDisabled then
-                        local tpCoords = Player(v.Source)?.state?.tpLocation
+                        local tpCoords = plsr.State:Player(v.Source).tpLocation
                         if tpCoords then
                             memberCoords[k] = vector3(tpCoords.x, tpCoords.y, tpCoords.z)
                         else
@@ -19,7 +19,7 @@ function StartAETrackingThreads()
                 end
             end
 
-            exports['pulsar-mdt']:EmergencyAlertsSendOnDutyEvent("EmergencyAlerts:Client:UpdateTrackers", memberCoords)
+            plsr.EmergencyAlerts:SendOnDutyEvent("EmergencyAlerts:Client:UpdateTrackers", memberCoords)
         end
     end)
 end

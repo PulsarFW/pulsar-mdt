@@ -1,3 +1,5 @@
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
+
 local _mdtProp = false
 local _badgeOpen = false
 
@@ -5,207 +7,174 @@ local badgeIdOpen = false
 
 local _sendEventOnClose = false
 
-exports("Open", function()
-	if not _mdtOpen then
-		_mdtOpen = true
-		SendNUIMessage({ type = "APP_SHOW" })
-		SetNuiFocus(true, true)
+_MDT = {
+	Open = function(self)
+		if not _mdtOpen then
+			_mdtOpen = true
+			SendNUIMessage({ type = "APP_SHOW" })
+			SetNuiFocus(true, true)
 
-		exports['pulsar-animations']:EmotesForceCancel()
-		TriggerEvent('ox_inventory:disarm', LocalPlayer.state.ped, true)
+			plsr.Animations.Emotes:ForceCancel()
+			plsr.Weapons:UnequipIfEquippedNoAnim()
 
-		CreateThread(function()
-			local playerPed = PlayerPedId()
-			LoadAnim("amb@code_human_in_bus_passenger_idles@female@tablet@base")
-			LoadModel(`prop_cs_tablet`)
+			CreateThread(function()
+				local tablet = config.MDT.Tablet
+				local playerPed = PlayerPedId()
+				LoadAnim(tablet.animDict)
+				LoadModel(tablet.model)
 
-			_mdtProp = CreateObject(`prop_cs_tablet`, GetEntityCoords(playerPed), 1, 1, 0)
-			SetEntityCollision(_mdtProp, false, true)
-			AttachEntityToEntity(
-				_mdtProp,
-				playerPed,
-				GetPedBoneIndex(playerPed, 60309),
-				0.02,
-				-0.01,
-				-0.03,
-				0.0,
-				0.0,
-				-10.0,
-				1,
-				0,
-				0,
-				0,
-				2,
-				1
-			)
+				_mdtProp = CreateObject(tablet.model, GetEntityCoords(playerPed), 1, 1, 0)
+				SetEntityCollision(_mdtProp, false, true)
+				AttachEntityToEntity(
+					_mdtProp,
+					playerPed,
+					GetPedBoneIndex(playerPed, tablet.boneIndex),
+					tablet.offset.x,
+					tablet.offset.y,
+					tablet.offset.z,
+					tablet.rotation.x,
+					tablet.rotation.y,
+					tablet.rotation.z,
+					1,
+					0,
+					0,
+					0,
+					2,
+					1
+				)
 
-			while _mdtOpen and _loggedIn do
-				if
-					not IsEntityPlayingAnim(
-						playerPed,
-						"amb@code_human_in_bus_passenger_idles@female@tablet@base",
-						"base",
-						3
-					)
-				then
-					TaskPlayAnim(
-						playerPed,
-						"amb@code_human_in_bus_passenger_idles@female@tablet@base",
-						"base",
-						3.0,
-						3.0,
-						-1,
-						49,
-						0,
-						false,
-						false,
-						false
-					)
+				while _mdtOpen and _loggedIn do
+					if not IsEntityPlayingAnim(playerPed, tablet.animDict, tablet.anim, 3) then
+						TaskPlayAnim(playerPed, tablet.animDict, tablet.anim, 3.0, 3.0, -1, 49, 0, false, false, false)
+					end
+					Wait(250)
 				end
-				Wait(250)
-			end
 
-			StopAnimTask(playerPed, "amb@code_human_in_bus_passenger_idles@female@tablet@base", "base", 3.0)
+				StopAnimTask(playerPed, tablet.animDict, tablet.anim, 3.0)
+				DeleteEntity(_mdtProp)
+			end)
+		end
+	end,
+	Close = function(self)
+		if _mdtOpen then
+			_mdtOpen = false
+			_openCd = false
+			SendNUIMessage({ type = "APP_HIDE" })
+			SetNuiFocus(false, false)
+
 			DeleteEntity(_mdtProp)
-		end)
-	end
-end)
 
-exports("Close", function()
-	if _mdtOpen then
-		_mdtOpen = false
-		_openCd = false
-		SendNUIMessage({ type = "APP_HIDE" })
-		SetNuiFocus(false, false)
-
-		DeleteEntity(_mdtProp)
-
-		if _sendEventOnClose then
-			_sendEventOnClose = false
-			TriggerServerEvent("MDT:Server:CloseMDT")
-		end
-
-		exports['pulsar-mdt']:DataSet("prison", false)
-	end
-end)
-
-exports("DataSet", function(key, data)
-	SendNUIMessage({ type = "SET_DATA", data = { type = key, data = data } })
-end)
-
-exports("DataAdd", function(type, data, key)
-	SendNUIMessage({ type = "ADD_DATA", data = { type = type, data = data, key = key } })
-end)
-
-exports("DataUpdate", function(type, id, data)
-	SendNUIMessage({ type = "UPDATE_DATA", data = { type = type, id = id, data = data } })
-end)
-
-exports("DataRemove", function(key, id)
-	SendNUIMessage({ type = "REMOVE_DATA", data = { type = key, id = id } })
-end)
-
-exports("DataReset", function()
-	SendNUIMessage({ type = "RESET_DATA" })
-end)
-
-exports("BadgesOpen", function(data)
-	if data and data.First and data.Last and data.Department and data.SID then
-		-- Dumb But Yeah
-		if data.Title == "Asst. District Attorney" then
-			data.Title = "ADA"
-		elseif data.Title == "Chief Public Defender" then
-			data.Title = "Chf. Pub. Defender"
-		elseif data.Title == "Superior Court Judge" then
-			data.Title = "Superior Judge"
-		elseif data.Title == "Probationary Officer" then
-			data.Title = "Prob. Officer"
-		elseif data.Title == "Probationary Deputy" then
-			data.Title = "Prob. Deputy"
-		elseif data.Title == "Probationary Trooper" then
-			data.Title = "Prob. Trooper"
-		elseif data.Title == "Emergency Medical Technician" then
-			data.Title = "EMT"
-		elseif data.Title == "Senior Emergency Medical Technician" then
-			data.Title = "Senior EMT"
-		end
-
-		SendNUIMessage({
-			type = "SHOW_GOV_ID",
-			data = data,
-		})
-		_badgeOpen = true
-		badgeIdOpen = data.SID
-
-		SetTimeout(9000, function()
-			if _badgeOpen and badgeIdOpen == data.SID then
-				exports['pulsar-mdt']:BadgesClose()
+			if _sendEventOnClose then
+				_sendEventOnClose = false
+				TriggerServerEvent("MDT:Server:CloseMDT")
 			end
-		end)
-	end
-end)
 
-exports("BadgesClose", function()
-	if _badgeOpen then
-		SendNUIMessage({ type = "HIDE_GOV_ID" })
-		_badgeOpen = false
-		badgeIdOpen = false
-	end
-end)
+			plsr.MDT.Data:Set("prison", false)
+		end
+	end,
+	Data = {
+		Set = function(self, key, data)
+			SendNUIMessage({ type = "SET_DATA", data = { type = key, data = data } })
+		end,
+		Add = function(self, type, data, key)
+			SendNUIMessage({ type = "ADD_DATA", data = { type = type, data = data, key = key } })
+		end,
+		Update = function(self, type, id, data)
+			SendNUIMessage({ type = "UPDATE_DATA", data = { type = type, id = id, data = data } })
+		end,
+		Remove = function(self, key, id)
+			SendNUIMessage({ type = "REMOVE_DATA", data = { type = key, id = id } })
+		end,
+		Reset = function(self)
+			SendNUIMessage({ type = "RESET_DATA" })
+		end,
+	},
+	Badges = {
+		Open = function(self, data)
+			if data and data.First and data.Last and data.Department and data.SID then
+				data.Title = config.Badges.titleAbbreviations[data.Title] or data.Title
 
-exports("LicensesOpen", function(data)
-	if data and data.Name and data.SID then
-		SendNUIMessage({
-			type = "SHOW_DRIVER_LICENSE",
-			data = data,
-		})
-		_badgeOpen = true
-		badgeIdOpen = data.SID
+				SendNUIMessage({
+					type = "SHOW_GOV_ID",
+					data = data,
+				})
+				_badgeOpen = true
+				badgeIdOpen = data.SID
 
-		SetTimeout(9000, function()
-			if _badgeOpen and badgeIdOpen == data.SID then
-				exports['pulsar-mdt']:LicensesClose()
+				Citizen.SetTimeout(config.Badges.displayDurationMs, function()
+					if _badgeOpen and badgeIdOpen == data.SID then
+						plsr.MDT.Badges:Close()
+					end
+				end)
 			end
-		end)
-	end
-end)
+		end,
+		Close = function(self)
+			if _badgeOpen then
+				SendNUIMessage({ type = "HIDE_GOV_ID" })
+				_badgeOpen = false
+				badgeIdOpen = false
+			end
+		end,
+	},
+	Licenses = {
+		Open = function(self, data)
+			if data and data.Name and data.SID then
+				SendNUIMessage({
+					type = "SHOW_DRIVER_LICENSE",
+					data = data,
+				})
+				_badgeOpen = true
+				badgeIdOpen = data.SID
 
-exports("LicensesClose", function()
-	if _badgeOpen then
-		SendNUIMessage({ type = "HIDE_DRIVER_LICENSE" })
-		_badgeOpen = false
-		badgeIdOpen = false
-	end
+				Citizen.SetTimeout(config.Badges.displayDurationMs, function()
+					if _badgeOpen and badgeIdOpen == data.SID then
+						plsr.MDT.Licenses:Close()
+					end
+				end)
+			end
+		end,
+		Close = function(self)
+			if _badgeOpen then
+				SendNUIMessage({ type = "HIDE_DRIVER_LICENSE" })
+				_badgeOpen = false
+				badgeIdOpen = false
+			end
+		end,
+	},
+}
+
+AddEventHandler("Proxy:Shared:RegisterReady", function()
+	exports["pulsar_core"]:RegisterComponent("MDT", _MDT)
 end)
 
 RegisterNetEvent("MDT:Client:Toggle", function(eventOnClose)
 	_sendEventOnClose = eventOnClose
 	if _mdtOpen then
-		exports['pulsar-mdt']:Close()
-		exports['pulsar-mdt']:EmergencyAlertsClose()
+		plsr.MDT:Close()
+		plsr.EmergencyAlerts:Close()
 	else
-		exports['pulsar-mdt']:Open()
+		plsr.MDT:Open()
 	end
 end)
 
 RegisterNetEvent("MDT:Client:Open", function()
-	exports['pulsar-mdt']:Open()
+	plsr.MDT:Open()
 end)
 
 RegisterNetEvent("MDT:Client:Close", function()
-	exports['pulsar-mdt']:Close()
-	exports['pulsar-mdt']:EmergencyAlertsClose()
+	plsr.MDT:Close()
+	plsr.EmergencyAlerts:Close()
 end)
 
 RegisterNUICallback("Close", function(data, cb)
 	cb("OK")
-	exports['pulsar-mdt']:Close()
-	exports['pulsar-mdt']:EmergencyAlertsClose()
+	plsr.MDT:Close()
+	plsr.EmergencyAlerts:Close()
 end)
 
 AddEventHandler("Ped:Client:Died", function()
-	exports['pulsar-mdt']:Close()
-	exports['pulsar-mdt']:EmergencyAlertsClose()
+	plsr.MDT:Close()
+	plsr.EmergencyAlerts:Close()
 end)
 
 function LoadAnim(dict)

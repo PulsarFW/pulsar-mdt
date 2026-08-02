@@ -1,88 +1,84 @@
-local trackerJobs = {
-	police = true,
-	ems = true,
-	prison = true
-}
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/server.lua"))()
+local sharedConfig = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
+
+local trackerJobs = {}
+for _, jobId in ipairs(sharedConfig.Jobs.tracked) do
+	trackerJobs[jobId] = true
+end
 
 function RegisterEACallbacks()
-	exports["pulsar-core"]:RegisterServerCallback("EmergencyAlerts:DisablePDTracker", function(source, target, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("EmergencyAlerts:DisablePDTracker", function(source, target, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 		if char then
-			local tState = Player(target).state
-			local targetChar = exports['pulsar-characters']:FetchCharacterSource(target)
-			if targetChar and tState and trackerJobs[tState.onDuty] and not tState.trackerDisabled then
-				tState.trackerDisabled = true
-				exports['pulsar-mdt']:EmergencyAlertsDisableTracker(target, true)
+			local targetChar = plsr.Fetch:CharacterSource(target)
+			local targetDuty = plsr.State:Player(target).onDuty
+			if targetChar and trackerJobs[targetDuty] and not plsr.State:Player(target).trackerDisabled then
+				plsr.State:SetPublicFlag(target, 'trackerDisabled', true)
+				plsr.EmergencyAlerts:DisableTracker(target, true)
 
 
 				local coords = GetEntityCoords(GetPlayerPed(target))
-				exports["pulsar-core"]:ClientCallback(target, "EmergencyAlerts:GetStreetName", coords,
-					function(location)
-						local radioFreq = "Unknown Radio Frequency"
-						if tState?.onRadio then
-							radioFreq = string.format("Radio Freq: %s", tState.onRadio)
-						else
-							radioFreq = "Not On Radio"
-						end
+				plsr.Callbacks:ClientCallback(target, "EmergencyAlerts:GetStreetName", coords, function(location)
+					local radioFreq = "Unknown Radio Frequency"
+					if plsr.State:Player(target).onRadio then
+						radioFreq = string.format("Radio Freq: %s", plsr.State:Player(target).onRadio)
+					else
+						radioFreq = "Not On Radio"
+					end
+	
+					
+					if targetDuty == "police" then
+						plsr.EmergencyAlerts:Create("13-C", "Officer Tracker Disabled", "police_alerts", location, {
+							icon = "circle-exclamation",
+							details = string.format(
+								"%s - %s %s | %s",
+								targetChar:GetData("Callsign") or "UNKN",
+								targetChar:GetData("First"),
+								targetChar:GetData("Last"),
+								radioFreq
+							)
+						}, false, {
+							icon = 303,
+							size = 1.2,
+							color = 26,
+							duration = config.Alerts.trackerDisabledAlertDurationSec,
+						}, 1)
+					elseif targetDuty == "prison" then
+						plsr.EmergencyAlerts:Create("13-C", "DOC Officer Tracker Disabled", {"police_alerts", "doc_alerts"}, location, {
+							icon = "circle-exclamation",
+							details = string.format(
+								"%s - %s %s | %s",
+								targetChar:GetData("Callsign") or "UNKN",
+								targetChar:GetData("First"),
+								targetChar:GetData("Last"),
+								radioFreq
+							)
+						}, false, {
+							icon = 303,
+							size = 1.2,
+							color = 26,
+							duration = config.Alerts.trackerDisabledAlertDurationSec,
+						}, 1)
+					elseif targetDuty == "ems" then
+						plsr.EmergencyAlerts:Create("13-C", "Medic Tracker Disabled", {"police_alerts", "ems_alerts"}, location, {
+							icon = "circle-exclamation",
+							details = string.format(
+								"%s - %s %s | %s",
+								targetChar:GetData("Callsign") or "UNKN",
+								targetChar:GetData("First"),
+								targetChar:GetData("Last"),
+								radioFreq
+							)
+						}, false, {
+							icon = 303,
+							size = 1.2,
+							color = 48,
+							duration = config.Alerts.trackerDisabledAlertDurationSec,
+						}, 2)
+					end
+				end)
 
-
-						if tState.onDuty == "police" then
-							exports['pulsar-mdt']:EmergencyAlertsCreate("13-C", "Officer Tracker Disabled",
-								"police_alerts", location, {
-									icon = "circle-exclamation",
-									details = string.format(
-										"%s - %s %s | %s",
-										targetChar:GetData("Callsign") or "UNKN",
-										targetChar:GetData("First"),
-										targetChar:GetData("Last"),
-										radioFreq
-									)
-								}, false, {
-									icon = 303,
-									size = 1.2,
-									color = 26,
-									duration = (60 * 10),
-								}, 1)
-						elseif tState.onDuty == "prison" then
-							exports['pulsar-mdt']:EmergencyAlertsCreate("13-C", "DOC Officer Tracker Disabled",
-								{ "police_alerts", "doc_alerts" },
-								location, {
-									icon = "circle-exclamation",
-									details = string.format(
-										"%s - %s %s | %s",
-										targetChar:GetData("Callsign") or "UNKN",
-										targetChar:GetData("First"),
-										targetChar:GetData("Last"),
-										radioFreq
-									)
-								}, false, {
-									icon = 303,
-									size = 1.2,
-									color = 26,
-									duration = (60 * 10),
-								}, 1)
-						elseif tState.onDuty == "ems" then
-							exports['pulsar-mdt']:EmergencyAlertsCreate("13-C", "Medic Tracker Disabled",
-								{ "police_alerts", "ems_alerts" },
-								location, {
-									icon = "circle-exclamation",
-									details = string.format(
-										"%s - %s %s | %s",
-										targetChar:GetData("Callsign") or "UNKN",
-										targetChar:GetData("First"),
-										targetChar:GetData("Last"),
-										radioFreq
-									)
-								}, false, {
-									icon = 303,
-									size = 1.2,
-									color = 48,
-									duration = (60 * 10),
-								}, 2)
-						end
-					end)
-
-				exports['pulsar-hud']:Notification("info", target, "Your Tracker Has Been Disabled")
+				plsr.Execute:Client(target, "Notification", "Info", "Your Tracker Has Been Disabled")
 				cb(true)
 				return
 			end
@@ -91,18 +87,17 @@ function RegisterEACallbacks()
 	end)
 
 	-- PD re-enabling their own tracker
-	exports["pulsar-core"]:RegisterServerCallback("EmergencyAlerts:EnablePDTracker", function(source, target, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
-		local pState = Player(source).state
-		if char and trackerJobs[pState.onDuty] and pState.trackerDisabled then
-			pState.trackerDisabled = false
-			exports['pulsar-mdt']:EmergencyAlertsDisableTracker(source, false)
+	plsr.Callbacks:RegisterServerCallback("EmergencyAlerts:EnablePDTracker", function(source, target, cb)
+		local char = plsr.Fetch:CharacterSource(source)
+		if char and trackerJobs[plsr.State:Player(source).onDuty] and plsr.State:Player(source).trackerDisabled then
+			plsr.State:SetPublicFlag(source, 'trackerDisabled', false)
+			plsr.EmergencyAlerts:DisableTracker(source, false)
 
-			local job = Player(source).state.onDuty
+			local job = plsr.State:Player(source).onDuty
 
-			exports['pulsar-jobs']:DutyOff(source, false, true)
+			plsr.Jobs.Duty:Off(source, false, true)
 			Wait(250)
-			exports['pulsar-jobs']:DutyOn(source, job, true)
+			plsr.Jobs.Duty:On(source, job, true)
 
 			cb(true)
 		else

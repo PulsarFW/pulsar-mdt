@@ -1,22 +1,22 @@
-local _jobs = {
-	police = true,
-	prison = true,
-	ems = true,
-	tow = true,
-}
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
 
-AddEventHandler('onClientResourceStart', function(resource)
-	if resource == GetCurrentResourceName() then
-		Wait(1000)
-		RegisterCallbacks()
-		exports["pulsar-kbs"]:Add("emergency_alerts_toggle", "GRAVE", "keyboard", "Police - Toggle Alerts Panel",
-			function()
-				local duty = LocalPlayer.state.onDuty
-				if _jobs[duty] and not LocalPlayer.state.isDead then
-					exports['pulsar-mdt']:EmergencyAlertsOpen()
-				end
-			end)
-	end
+local _jobs = {}
+for _, jobId in ipairs(config.Jobs.dispatchPanel) do
+	_jobs[jobId] = true
+end
+
+CreateThread(function()
+	RegisterCallbacks()
+	plsr.Keybinds:Add("emergency_alerts_toggle", config.Keybinds.toggleAlertsPanel.default, "keyboard", config.Keybinds.toggleAlertsPanel.label, function()
+		local duty = plsr.State.flags.onDuty
+		if _jobs[duty] and not plsr.State.flags.isDead then
+			plsr.EmergencyAlerts:Open()
+		end
+	end)
+end)
+
+AddEventHandler("Proxy:Shared:RegisterReady", function()
+	exports["pulsar_core"]:RegisterComponent("EmergencyAlerts", _pdAlerts)
 end)
 
 local _pTs = {
@@ -27,11 +27,11 @@ local _pTs = {
 }
 
 function isEligiblePed(p, gs, spd)
-	if math.random(100) > 15 then
+	if math.random(100) > config.Alerts.npcAlertChancePercent then
 		return false
 	end
 
-	if LocalPlayer.state.inCayo then
+	if plsr.State.flags.inCayo then
 		return false
 	end
 
@@ -49,11 +49,11 @@ function isEligiblePed(p, gs, spd)
 		return false
 	end
 
-	if p == LocalPlayer.state.ped then
+	if p == PlayerPedId() then
 		return false
 	end
 
-	if LocalPlayer.state.oxyBuyer ~= nil and LocalPlayer.state.oxyBuyer.ped == p then
+	if plsr.State.flags.oxyBuyer ~= nil and plsr.State.flags.oxyBuyer.ped == p then
 		return false
 	end
 
@@ -63,11 +63,11 @@ function isEligiblePed(p, gs, spd)
 
 	local startcoords = GetEntityCoords(p)
 
-	if #(LocalPlayer.state.myPos - startcoords) < 10.0 then
+	if #(plsr.State.flags.position - startcoords) < config.Alerts.npcAlertMinDistance then
 		return false
 	end
 
-	if not HasEntityClearLosToEntity(LocalPlayer.state.ped, p, 17) and not gs then
+	if not HasEntityClearLosToEntity(PlayerPedId(), p, config.Alerts.npcAlertLosRadius) and not gs then
 		return false
 	end
 
@@ -103,7 +103,7 @@ function isEligiblePed(p, gs, spd)
 		return false
 	end
 
-	local entState = Entity(p).state
+	local entState = plsr.State.Entity(p)
 	if entState.boughtDrugs then
 		return false
 	end
@@ -128,7 +128,7 @@ function nearNpc(dist, isGunshot)
 	local retval = nil
 	repeat
 		local loc = GetEntityCoords(ped)
-		local d1 = #(vector3(LocalPlayer.state.myPos.x, LocalPlayer.state.myPos.y, LocalPlayer.state.myPos.z) - loc)
+		local d1 = #(vector3(plsr.State.flags.position.x, plsr.State.flags.position.y, plsr.State.flags.position.z) - loc)
 		if isEligiblePed(ped, isGunshot) and d1 <= dist and (retval == nil or d1 < retval.dist) then
 			retval = {
 				ped = ped,
@@ -143,7 +143,7 @@ function nearNpc(dist, isGunshot)
 end
 
 function RegisterCallbacks()
-	exports["pulsar-core"]:RegisterClientCallback("EmergencyAlerts:GetStreetName", function(data, cb)
+	plsr.Callbacks:RegisterClientCallback("EmergencyAlerts:GetStreetName", function(data, cb)
 		local x, y, z = table.unpack(data)
 		local main, cross = GetStreetNameAtCoord(x, y, z, Citizen.ResultAsInteger(), Citizen.ResultAsInteger())
 
@@ -161,42 +161,38 @@ function RegisterCallbacks()
 end
 
 local ids = 0
-
-exports("EmergencyAlertsOpen", function()
-	SendNUIMessage({
-		type = "SET_SHOWING",
-		data = {
-			state = true,
-		},
-	})
-	SetNuiFocus(true, true)
-end)
-
-exports("EmergencyAlertsClose", function()
-	SendNUIMessage({
-		type = "SET_SHOWING",
-		data = {
-			state = false,
-		},
-	})
-	SetNuiFocus(false, false)
-end)
-
-exports("EmergencyAlertsCreateIfReported", function(distance, type, isNpcTriggered, description)
-	if isNpcTriggered then
-		local ped = nearNpc(distance, type == "shotsfired" or type == "shotsfiredvehicle")
-		if ped ~= nil then
+_pdAlerts = {
+	Open = function(self)
+		SendNUIMessage({
+			type = "SET_SHOWING",
+			data = {
+				state = true,
+			},
+		})
+		SetNuiFocus(true, true)
+	end,
+	Close = function(self)
+		SendNUIMessage({
+			type = "SET_SHOWING",
+			data = {
+				state = false,
+			},
+		})
+		SetNuiFocus(false, false)
+	end,
+	CreateIfReported = function(self, distance, type, isNpcTriggered, description)
+		if isNpcTriggered then
+			local ped = nearNpc(distance, type == "shotsfired" or type == "shotsfiredvehicle")
+			if ped ~= nil then
+				TriggerServerEvent("EmergencyAlerts:Server:DoPredefined", type, description)
+				return true
+			end
+			return false
+		else
 			TriggerServerEvent("EmergencyAlerts:Server:DoPredefined", type, description)
-			return true
 		end
-		return false
-	else
-		TriggerServerEvent("EmergencyAlerts:Server:DoPredefined", type, description)
-	end
-end)
-
-exports("EmergencyAlertsCreateClientAlert",
-	function(code, title, eType, location, description, isPanic, blip, styleOverride, isArea, camera)
+	end,
+	CreateClientAlert = function(self, code, title, eType, location, description, isPanic, blip, styleOverride, isArea, camera)
 		local alert = {
 			id = string.format("local-%s-%s", GetGameTimer(), math.random(1000, 9999)),
 			code = code,
@@ -218,12 +214,13 @@ exports("EmergencyAlertsCreateClientAlert",
 				alert = alert,
 			},
 		})
-	end)
+	end,
+}
 
 RegisterNetEvent("EmergencyAlerts:Client:Open", function()
-	exports['pulsar-mdt']:EmergencyAlertsOpen()
+	plsr.EmergencyAlerts:Open()
 end)
 
 RegisterNetEvent("EmergencyAlerts:Client:Close", function()
-	exports['pulsar-mdt']:EmergencyAlertsClose()
+	plsr.EmergencyAlerts:Close()
 end)

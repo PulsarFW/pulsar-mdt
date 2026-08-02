@@ -1,27 +1,23 @@
-name("Pulsar Framework MDT")
-description("Mobile Data Terminal Written For Pulsar Framework")
-author("Dr Nick")
-version "1.0.3"
-lua54("yes")
 fx_version("cerulean")
 game("gta5")
-client_script("@pulsar-core/exports/cl_error.lua")
-client_script("@pulsar-pwnzor/client/check.lua")
+
+name("Pulsar Mdt")
+description("Police Mobile Data Terminal")
+author("Artmines - maintained for Pulsar Framework")
+url("https://pulsarframe.work")
+version("v1.0.0")
+
+version_check("yes")
+github("https://github.com/PulsarFW/pulsar_mdt")
+lua54("yes")
+
+client_script("@pulsar_core/components/cl_error.lua")
+shared_script("@pulsar_core/core/sh_pulsar.lua")
+client_script("@pulsar_pwnzor/client/check.lua")
 server_script("@oxmysql/lib/MySQL.lua")
 
-client_scripts({
-  "client/**/*.lua"
-})
-
-server_scripts({
-  '@oxmysql/lib/MySQL.lua',
-  "server/**/*.lua"
-})
-
-shared_scripts({
-  "shared/*.lua",
-})
+client_scripts({ "client/**/*.lua" })
+server_scripts({ "config/utils/*.lua", "server/**/*.lua" })
 
 ui_page("ui/dist/index.html")
-
-files({ "ui/dist/index.html", "ui/dist/*.js" })
+files({ "ui/dist/index.html", "ui/dist/assets/*", "config/shared.lua" })

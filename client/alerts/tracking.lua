@@ -1,10 +1,11 @@
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
+
 _trackerBlips = {}
 
-_trackedJobs = {
-	police = true,
-	ems = true,
-	prison = true,
-}
+_trackedJobs = {}
+for _, jobId in ipairs(config.Jobs.tracked) do
+	_trackedJobs[jobId] = true
+end
 
 _emergencyMembersData = {}
 _emergencyMembersLocations = {}
@@ -12,13 +13,13 @@ _emergencyMembersLocations = {}
 RegisterNetEvent("Job:Client:DutyChanged", function(state)
 	if state and _trackedJobs[state] then
 		CreateThread(function()
-			local mySID = LocalPlayer.state.Character:GetData("SID")
-			exports['pulsar-core']:LoggerTrace("Tracking", "Start Emergency Tracking")
+			local mySID = plsr.State.character.SID
+			plsr.Logger:Trace("Tracking", "Start Emergency Tracking")
 			while
-				LocalPlayer.state.loggedIn
-				and LocalPlayer.state.onDuty
-				and _trackedJobs[LocalPlayer.state.onDuty]
-				and not LocalPlayer.state.trackerDisabled
+				plsr.State.flags.loggedIn
+				and plsr.State.flags.onDuty
+				and _trackedJobs[plsr.State.flags.onDuty]
+				and not plsr.State.flags.trackerDisabled
 			do
 				Wait(1000)
 				for k, v in pairs(_emergencyMembersData) do
@@ -74,7 +75,7 @@ RegisterNetEvent("Job:Client:DutyChanged", function(state)
 				end
 			end
 
-			exports['pulsar-core']:LoggerTrace("Tracking", "Clear Emergency Tracking")
+			plsr.Logger:Trace("Tracking", "Clear Emergency Tracking")
 
 			for k, v in pairs(_trackerBlips) do
 				RemoveBlip(v.blipId)
@@ -112,26 +113,9 @@ end)
 function ApplyStylingToBlip(blip, data)
 	SetBlipCategory(blip, 7)
 
-	if data.Job == "police" then
-		if data.Workplace == "sast" then
-			SetBlipColour(blip, 55)
-		elseif data.Workplace == "bcso" then
-			SetBlipColour(blip, 31)
-		elseif data.Workplace == "guardius" then
-			SetBlipColour(blip, 46)
-		else
-			SetBlipColour(blip, 3)
-		end
-	elseif data.Job == "prison" then
-		if data.Workplace == "corrections" then
-			SetBlipColour(blip, 11)
-		end
-	elseif data.Job == "ems" then
-		if data.Workplace == "doctors" then
-			SetBlipColour(blip, 62)
-		else
-			SetBlipColour(blip, 8)
-		end
+	local colors = config.BlipColors[data.Job]
+	if colors then
+		SetBlipColour(blip, colors[data.Workplace] or colors.default)
 	end
 
 	SetBlipScale(blip, 0.7)
@@ -175,14 +159,14 @@ function IsPlayerCloseEnoughToTrack(src, data)
 end
 
 AddEventHandler("MDT:Client:DisableTracker", function(entity, data)
-	local playerState = Player(entity.serverId).state
+	local targetDuty = plsr.State:GetPublicFlag(entity.serverId, 'onDuty')
 	if
-		(playerState.onDuty == "police" or playerState.onDuty == "prison" or playerState.onDuty == "ems")
-		and not playerState.trackerDisabled
+		(targetDuty == "police" or targetDuty == "prison" or targetDuty == "ems")
+		and not plsr.State:GetPublicFlag(entity.serverId, 'trackerDisabled')
 	then
-		exports['pulsar-hud']:ProgressWithTickEvent({
+		plsr.Progress:ProgressWithTickEvent({
 			name = "disable_police_tracker",
-			duration = 10000,
+			duration = config.Alerts.disableTrackerHoldMs,
 			label = "Disabling Tracker",
 			useWhileDead = false,
 			canCancel = true,
@@ -201,29 +185,28 @@ AddEventHandler("MDT:Client:DisableTracker", function(entity, data)
 		}, function()
 			if
 				#(
-					GetEntityCoords(LocalPlayer.state.ped)
+					GetEntityCoords(PlayerPedId())
 					- GetEntityCoords(GetPlayerPed(GetPlayerFromServerId(entity.serverId)))
-				) <= 3.0
+				) <= config.Alerts.disableTrackerDistance
 			then
 				return
 			end
-			exports['pulsar-hud']:ProgressCancel()
+			plsr.Progress:Cancel()
 		end, function(cancelled)
 			if not cancelled then
 				if
-					(playerState.onDuty == "police" or playerState.onDuty == "prison" or playerState.onDuty == "ems")
-					and not playerState.trackerDisabled
+					(targetDuty == "police" or targetDuty == "prison" or targetDuty == "ems")
+					and not plsr.State:GetPublicFlag(entity.serverId, 'trackerDisabled')
 				then
-					exports["pulsar-core"]:ServerCallback("EmergencyAlerts:DisablePDTracker", entity.serverId,
-						function(success)
-							if success then
-								exports["pulsar-hud"]:Notification("success", "Disabled Their Tracker")
-							end
-						end)
+					plsr.Callbacks:ServerCallback("EmergencyAlerts:DisablePDTracker", entity.serverId, function(success)
+						if success then
+							plsr.Notification:Success("Disabled Their Tracker")
+						end
+					end)
 				end
 			end
 		end)
 	else
-		exports["pulsar-hud"]:Notification("error", "Unable to Disable Tracker")
+		plsr.Notification:Error("Unable to Disable Tracker")
 	end
 end)

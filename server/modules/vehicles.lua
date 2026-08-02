@@ -1,387 +1,276 @@
 function GetVehicleOwnerData(sid)
-	local result = MySQL.single.await('SELECT First, Last, SID FROM characters WHERE SID = ?', { sid })
-	return result
-end
-
-local function DecodeJsonField(field, defaultValue)
-	if field and type(field) == "string" then
-		local success, decoded = pcall(json.decode, field)
-		if success and decoded then
-			return decoded
+	local p = promise.new()
+	plsr.Database:Single("SELECT `data` FROM `characters` WHERE `sid` = ? AND `deleted` = 0", { sid }, function(success, row)
+		if not success or row == nil then
+			p:resolve(nil)
+			return
 		end
-	end
-	return defaultValue or {}
+		local ok, decoded = pcall(json.decode, row.data)
+		if ok and type(decoded) == "table" then
+			p:resolve({ First = decoded.First, Last = decoded.Last, SID = decoded.SID })
+		else
+			p:resolve(nil)
+		end
+	end)
+
+	return Citizen.Await(p)
 end
 
-local function DecodeVehicleJsonFields(vehicle)
-	vehicle.Properties = DecodeJsonField(vehicle.Properties, {})
-	vehicle.Damage = DecodeJsonField(vehicle.Damage, {})
-	vehicle.DamagedParts = DecodeJsonField(vehicle.DamagedParts, {})
-	vehicle.Polish = DecodeJsonField(vehicle.Polish, {})
-	vehicle.PurgeColor = DecodeJsonField(vehicle.PurgeColor, {})
-	vehicle.WheelFitment = DecodeJsonField(vehicle.WheelFitment, {})
+_MDT.Vehicles = {
+	Search = function(self, term, page, perPage)
+		local p = promise.new()
 
-	if vehicle.Properties and type(vehicle.Properties) == "table" then
-		if vehicle.Properties.Strikes and type(vehicle.Properties.Strikes) == "string" then
-			local success, strikes = pcall(json.decode, vehicle.Properties.Strikes)
-			if success and strikes and type(strikes) == "table" then
-				vehicle.Properties.Strikes = strikes
-			else
-				vehicle.Properties.Strikes = {}
+		local skip = 0
+		if page > 1 then
+			skip = perPage * (page - 1)
+		end
+
+		local sql, params
+
+		if term and term:sub(1, 5) == "SID: " then
+			local sid = tonumber(term:sub(6, #term))
+			if sid then
+				sql = "SELECT `id`, `data` FROM `vehicles` WHERE `owner_type` = 0 AND `owner_id` = ? ORDER BY `id` DESC LIMIT ? OFFSET ?"
+				params = { tostring(sid), perPage + 1, skip }
 			end
-		elseif not vehicle.Properties.Strikes then
-			vehicle.Properties.Strikes = {}
 		end
 
-		if vehicle.Properties.Flags and type(vehicle.Properties.Flags) == "string" then
-			local success, flags = pcall(json.decode, vehicle.Properties.Flags)
-			if success and flags and type(flags) == "table" then
-				local isArray = false
-				for k, v in pairs(flags) do
-					if type(k) == "number" then
-						isArray = true
-						break
+		if not sql then
+			local like = "%" .. term .. "%"
+			sql = "SELECT `id`, `data` FROM `vehicles` WHERE `vin` LIKE ? OR `registered_plate` LIKE ? OR CONCAT(JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.Make')), ' ', JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.Model'))) LIKE ? ORDER BY `id` DESC LIMIT ? OFFSET ?"
+			params = { like, like, like, perPage + 1, skip }
+		end
+
+		plsr.Database:Query(sql, params, function(success, rows)
+			if not success then
+				p:resolve(false)
+				return
+			end
+
+			local results = {}
+			for k, row in ipairs(rows) do
+				local ok, decoded = pcall(json.decode, row.data)
+				if ok and type(decoded) == "table" then
+					decoded._id = row.id
+					decoded.Type = decoded.Type or 0
+					decoded.Make = decoded.Make or "Unknown"
+					decoded.Model = decoded.Model or "Unknown"
+					decoded.RegisteredPlate = decoded.RegisteredPlate or "N/A"
+					decoded.VIN = decoded.VIN or "N/A"
+					table.insert(results, decoded)
+				end
+			end
+
+			local pageCount = nil
+			if #results > perPage then -- There is more results for the next pages
+				table.remove(results)
+				pageCount = page + 1
+			end
+
+			p:resolve({
+				data = results,
+				pages = pageCount,
+			})
+		end)
+		return Citizen.Await(p)
+	end,
+	View = function(self, VIN)
+		local p = promise.new()
+		plsr.Database:Single("SELECT `data`, `flags`, `strikes`, `gov_assigned` FROM `vehicles` WHERE `vin` = ?", { VIN }, function(success, row)
+			if not success or row == nil then
+				p:resolve(false)
+				return
+			end
+			local ok, vehicle = pcall(json.decode, row.data)
+			if not ok or type(vehicle) ~= "table" then
+				p:resolve(false)
+				return
+			end
+
+			if row.flags then
+				local fok, flags = pcall(json.decode, row.flags)
+				vehicle.Flags = (fok and flags) or nil
+			end
+			if row.strikes then
+				local sok, strikes = pcall(json.decode, row.strikes)
+				vehicle.Strikes = (sok and strikes) or nil
+			end
+			if row.gov_assigned then
+				local gok, govAssigned = pcall(json.decode, row.gov_assigned)
+				vehicle.GovAssigned = (gok and govAssigned) or nil
+			end
+
+			if vehicle.Owner then
+				if vehicle.Owner.Type == 0 then
+					vehicle.Owner.Person = GetVehicleOwnerData(vehicle.Owner.Id)
+				elseif vehicle.Owner.Type == 1 or vehicle.Owner.Type == 2 then
+					local jobData = plsr.Jobs:DoesExist(vehicle.Owner.Id, vehicle.Owner.Workplace)
+					if jobData then
+						if jobData.Workplace then
+							vehicle.Owner.JobName = string.format('%s (%s)', jobData.Name, jobData.Workplace.Name)
+						else
+							vehicle.Owner.JobName = jobData.Name
+						end
 					end
 				end
 
-				if not isArray then
-					vehicle.Properties.Flags = { flags }
-				else
-					vehicle.Properties.Flags = flags
-				end
-			else
-				vehicle.Properties.Flags = {}
-			end
-		elseif not vehicle.Properties.Flags then
-			vehicle.Properties.Flags = {}
-		end
-
-		if vehicle.Properties.GovAssigned then
-			if type(vehicle.Properties.GovAssigned) == "string" then
-				local success, govAssigned = pcall(json.decode, vehicle.Properties.GovAssigned)
-				if success and govAssigned and type(govAssigned) == "table" then
-					vehicle.Properties.GovAssigned = govAssigned
-				else
-					vehicle.Properties.GovAssigned = nil
+				if vehicle.Owner.Type == 2 then
+					vehicle.Owner.JobName = vehicle.Owner.JobName .. " (Dealership Buyback)"
 				end
 			end
-		end
 
-		vehicle.Strikes = vehicle.Properties.Strikes or {}
-		vehicle.Flags = vehicle.Properties.Flags or {}
-		vehicle.GovAssigned = vehicle.Properties.GovAssigned or nil
-	end
-end
+			if vehicle.Storage then
+				if vehicle.Storage.Type == 0 then
+					vehicle.Storage.Name = plsr.Vehicles.Garages:Impound().name
+				elseif vehicle.Storage.Type == 1 then
+					vehicle.Storage.Name = plsr.Vehicles.Garages:Get(vehicle.Storage.Id).name
+				elseif vehicle.Storage.Type == 2 then
+					local prop = plsr.Properties:Get(vehicle.Storage.Id)
+					vehicle.Storage.Name = prop?.label
+				end
+			end
 
-exports('VehiclesSearch', function(term, page, perPage)
-	page = page or 1
-	perPage = perPage or 10
+			if vehicle.RegisteredPlate then
+				local flagged = plsr.Radar:CheckPlate(vehicle.RegisteredPlate)
+				if flagged and not flagged:find("^MDT Flag: ") then
+					vehicle.RadarFlag = flagged
+				end
+			end
 
-	page = tonumber(page) or 1
-	perPage = tonumber(perPage) or 10
-
-	page = math.max(1, page)
-	perPage = math.max(1, perPage)
-
-	local skip = 0
-	if page > 1 then
-		skip = perPage * (page - 1)
-	end
-
-	local query = ""
-	local params = {}
-
-	if term and term:sub(1, 5) == "SID: " then
-		local sid = tonumber(term:sub(6, #term))
-		if sid then
-			query = "WHERE OwnerType = ? AND OwnerId = ?"
-			params = { 0, sid }
-		end
-	else
-		query = "WHERE (VIN LIKE ? OR RegisteredPlate LIKE ? OR CONCAT(Make, ' ', Model) LIKE ?)"
-		params = { "%" .. (term or "") .. "%", "%" .. (term or "") .. "%", "%" .. (term or "") .. "%" }
-	end
-
-	local finalParams = {}
-	for i = 1, #params do
-		table.insert(finalParams, params[i])
-	end
-	table.insert(finalParams, perPage + 1)
-	table.insert(finalParams, skip)
-
-	local results = MySQL.query.await(
-		"SELECT * FROM vehicles " .. query .. " ORDER BY Created DESC LIMIT ? OFFSET ?",
-		finalParams
-	)
-
-	if not results then
-		return {
-			data = {},
-			pages = nil,
-		}
-	end
-
-	local processedResults = {}
-	for i = 1, #results do
-		local vehicle = results[i]
-		if vehicle then
-			DecodeVehicleJsonFields(vehicle)
-
-			vehicle.Type = vehicle.Type or 0
-			vehicle.Make = vehicle.Make or "Unknown"
-			vehicle.Model = vehicle.Model or "Unknown"
-			vehicle.RegisteredPlate = vehicle.RegisteredPlate or "N/A"
-			vehicle.OwnerType = vehicle.OwnerType or 0
-			vehicle.OwnerId = vehicle.OwnerId or 0
-			vehicle.VIN = vehicle.VIN or "N/A"
-			vehicle.Class = vehicle.Class or "Unknown"
-			vehicle.ModelType = vehicle.ModelType or "automobile"
-			vehicle.Fuel = vehicle.Fuel or 100.0
-			vehicle.Mileage = vehicle.Mileage or 0.0
-			vehicle.Value = vehicle.Value or 0
-			vehicle.FirstSpawn = vehicle.FirstSpawn or 0
-			vehicle.FakePlate = vehicle.FakePlate or 0
-			if vehicle.OwnerType == 0 then
-				vehicle.Owner = {
-					Type = vehicle.OwnerType,
-					Id = vehicle.OwnerId,
-					Person = GetVehicleOwnerData(vehicle.OwnerId)
-				}
-			elseif vehicle.OwnerType == 1 or vehicle.OwnerType == 2 then
-				local jobData = exports['pulsar-jobs']:DoesExist(vehicle.OwnerId, vehicle.OwnerWorkplace)
-				if jobData then
-					local jobName = jobData.Name
-					if jobData.Workplace then
-						jobName = string.format('%s (%s)', jobData.Name, jobData.Workplace.Name)
+			p:resolve(vehicle)
+		end)
+		return Citizen.Await(p)
+	end,
+	Flags = {
+		Add = function(self, VIN, data, plate)
+			local p = promise.new()
+			EnsureMDTTables(function()
+				plsr.Database:Single("SELECT `flags` FROM `vehicles` WHERE `vin` = ?", { VIN }, function(success, row)
+					if not success or row == nil then
+						p:resolve(false)
+						return
 					end
-					if vehicle.OwnerType == 2 then
-						jobName = jobName .. " (Dealership Buyback)"
+					local flags = {}
+					if row.flags then
+						local ok, decoded = pcall(json.decode, row.flags)
+						if ok and type(decoded) == "table" then
+							flags = decoded
+						end
 					end
-					vehicle.Owner = {
-						Type = vehicle.OwnerType,
-						Id = vehicle.OwnerId,
-						Workplace = vehicle.OwnerWorkplace,
-						JobName = jobName
-					}
-				else
-					vehicle.Owner = {
-						Type = vehicle.OwnerType,
-						Id = vehicle.OwnerId,
-						Workplace = vehicle.OwnerWorkplace,
-						JobName = "Unknown Organization"
-					}
+					table.insert(flags, data)
+
+					plsr.Database:Update("UPDATE `vehicles` SET `flags` = ? WHERE `vin` = ?", { json.encode(flags), VIN }, function(updateSuccess)
+						if updateSuccess and data.Type and data.Description and plate then
+							plsr.Radar:AddFlaggedPlate(plate, "MDT Flag: " .. data.Description)
+						end
+						p:resolve(updateSuccess)
+					end)
+				end)
+			end)
+			return Citizen.Await(p)
+		end,
+		Remove = function(self, VIN, flag, plate, removeRadarFlag)
+			local p = promise.new()
+			EnsureMDTTables(function()
+				plsr.Database:Single("SELECT `flags` FROM `vehicles` WHERE `vin` = ?", { VIN }, function(success, row)
+					if not success or row == nil then
+						p:resolve(false)
+						return
+					end
+					local flags = {}
+					if row.flags then
+						local ok, decoded = pcall(json.decode, row.flags)
+						if ok and type(decoded) == "table" then
+							flags = decoded
+						end
+					end
+
+					local remaining = {}
+					for _, f in ipairs(flags) do
+						if f.Type ~= flag then
+							table.insert(remaining, f)
+						end
+					end
+
+					plsr.Database:Update("UPDATE `vehicles` SET `flags` = ? WHERE `vin` = ?", { json.encode(remaining), VIN }, function(updateSuccess)
+						p:resolve(updateSuccess)
+
+						if updateSuccess and plate and removeRadarFlag then
+							local isFlagged = plsr.Radar:CheckPlate(plate)
+							if isFlagged == "Vehicle Flagged in MDT" then
+								plsr.Radar:RemoveFlaggedPlate(plate)
+							end
+						end
+					end)
+				end)
+			end)
+			return Citizen.Await(p)
+		end,
+	},
+	UpdateStrikes = function(self, VIN, strikes)
+		local p = promise.new()
+		EnsureMDTTables(function()
+			plsr.Database:Update("UPDATE `vehicles` SET `strikes` = ? WHERE `vin` = ?", { json.encode(strikes), VIN }, function(success)
+				p:resolve(success)
+			end)
+		end)
+		return Citizen.Await(p)
+	end,
+	GetStrikes = function(self, VIN)
+		local p = promise.new()
+		EnsureMDTTables(function()
+			plsr.Database:Single("SELECT `strikes` FROM `vehicles` WHERE `vin` = ?", { VIN }, function(success, row)
+				if success and row ~= nil and row.strikes then
+					local ok, strikes = pcall(json.decode, row.strikes)
+					if ok and type(strikes) == "table" then
+						p:resolve(#strikes)
+						return
+					end
 				end
-			else
-				vehicle.Owner = {
-					Type = vehicle.OwnerType,
-					Id = vehicle.OwnerId,
-					Workplace = vehicle.OwnerWorkplace
-				}
-			end
+				p:resolve(0)
+			end)
+		end)
 
-			if vehicle.StorageType ~= nil then
-				local storageName = nil
-				if vehicle.StorageType == 0 then
-					storageName = exports['pulsar-vehicles']:GaragesImpound().name
-				elseif vehicle.StorageType == 1 then
-					local garage = exports['pulsar-vehicles']:GaragesGet(vehicle.StorageId)
-					storageName = garage and garage.name or nil
-				elseif vehicle.StorageType == 2 then
-					local prop = exports['pulsar-properties']:Get(vehicle.StorageId)
-					storageName = prop and prop.label or nil
-				end
-
-				if storageName then
-					vehicle.Storage = {
-						Type = vehicle.StorageType,
-						Id = vehicle.StorageId,
-						Name = storageName
-					}
-				end
-			end
-
-			table.insert(processedResults, vehicle)
-		end
+		return Citizen.Await(p)
 	end
-
-	local pageCount = nil
-	if #processedResults > perPage then
-		table.remove(processedResults)
-		pageCount = page + 1
-	end
-
-	return {
-		data = processedResults,
-		pages = pageCount,
-	}
-end)
-
-exports('VehiclesView', function(VIN)
-	local vehicle = MySQL.single.await(
-		"SELECT * FROM vehicles WHERE VIN = ?",
-		{ VIN }
-	)
-
-	if not vehicle then
-		return false
-	end
-
-	DecodeVehicleJsonFields(vehicle)
-
-	if vehicle.OwnerType == 0 then
-		vehicle.Owner = {
-			Type = vehicle.OwnerType,
-			Id = vehicle.OwnerId,
-			Person = GetVehicleOwnerData(vehicle.OwnerId)
-		}
-	elseif vehicle.OwnerType == 1 or vehicle.OwnerType == 2 then
-		local jobData = exports['pulsar-jobs']:DoesExist(vehicle.OwnerId, vehicle.OwnerWorkplace)
-		if jobData then
-			local jobName = jobData.Name
-			if jobData.Workplace then
-				jobName = string.format('%s (%s)', jobData.Name, jobData.Workplace.Name)
-			end
-			if vehicle.OwnerType == 2 then
-				jobName = jobName .. " (Dealership Buyback)"
-			end
-			vehicle.Owner = {
-				Type = vehicle.OwnerType,
-				Id = vehicle.OwnerId,
-				Workplace = vehicle.OwnerWorkplace,
-				JobName = jobName
-			}
-		end
-	end
-
-	if vehicle.StorageType ~= nil then
-		local storageName = nil
-		if vehicle.StorageType == 0 then
-			storageName = exports['pulsar-vehicles']:GaragesImpound().name
-		elseif vehicle.StorageType == 1 then
-			local garage = exports['pulsar-vehicles']:GaragesGet(vehicle.StorageId)
-			storageName = garage and garage.name or nil
-		elseif vehicle.StorageType == 2 then
-			local prop = exports['pulsar-properties']:Get(vehicle.StorageId)
-			storageName = prop and prop.label or nil
-		end
-
-		if storageName then
-			vehicle.Storage = {
-				Type = vehicle.StorageType,
-				Id = vehicle.StorageId,
-				Name = storageName
-			}
-		end
-	end
-
-	if vehicle.RegisteredPlate then
-		local flagged = exports['pulsar-radar']:CheckPlate(vehicle.RegisteredPlate)
-		if flagged ~= "Vehicle Flagged in MDT" then
-			vehicle.RadarFlag = flagged
-		end
-	end
-
-	return vehicle
-end)
-
-exports('VehiclesFlagsAdd', function(VIN, data, plate)
-	local success = MySQL.update.await(
-		"UPDATE vehicles SET Properties = JSON_SET(COALESCE(Properties, '{}'), '$.Flags', ?) WHERE VIN = ?",
-		{ json.encode(data), VIN }
-	)
-
-	if success and plate then
-		exports['pulsar-radar']:AddFlaggedPlate(plate, data)
-	end
-
-	return success
-end)
-
-exports('VehiclesFlagsRemove', function(VIN, plate)
-	local success = MySQL.update.await(
-		"UPDATE vehicles SET Properties = JSON_REMOVE(Properties, '$.Flags') WHERE VIN = ?",
-		{ VIN }
-	)
-
-	if success and plate then
-		exports['pulsar-radar']:RemoveFlaggedPlate(plate)
-	end
-
-	return success
-end)
-
-exports('VehiclesUpdateStrikes', function(VIN, strikes)
-	local success = MySQL.update.await(
-		"UPDATE vehicles SET Properties = JSON_SET(COALESCE(Properties, '{}'), '$.Strikes', ?) WHERE VIN = ?",
-		{ json.encode(strikes), VIN }
-	)
-
-	return success
-end)
-
-exports('VehiclesGetStrikes', function(VIN)
-	local vehicle = MySQL.single.await(
-		"SELECT VIN, Properties, RegisteredPlate FROM vehicles WHERE VIN = ?",
-		{ VIN }
-	)
-
-	if not vehicle then
-		return 0
-	end
-
-	DecodeVehicleJsonFields(vehicle)
-
-	local strikes = 0
-	if vehicle.Strikes and type(vehicle.Strikes) == "table" and #vehicle.Strikes > 0 then
-		strikes = #vehicle.Strikes
-	end
-
-	return strikes
-end)
+}
 
 AddEventHandler("MDT:Server:RegisterCallbacks", function()
-	exports["pulsar-core"]:RegisterServerCallback("MDT:Search:vehicle", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:Search:vehicle", function(source, data, cb)
 		if CheckMDTPermissions(source, false) then
-			local term = data.term or ""
-			local page = data.page or 1
-			local perPage = data.perPage or 10
-
-			page = tonumber(page) or 1
-			perPage = tonumber(perPage) or 10
-
-			cb(exports['pulsar-mdt']:VehiclesSearch(term, page, perPage))
+			cb(plsr.MDT.Vehicles:Search(data.term, data.page, data.perPage))
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:View:vehicle", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:View:vehicle", function(source, data, cb)
 		if CheckMDTPermissions(source, false) then
-			cb(exports['pulsar-mdt']:VehiclesView(data))
+			cb(plsr.MDT.Vehicles:View(data))
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:Create:vehicle-flag", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:Create:vehicle-flag", function(source, data, cb)
 		if CheckMDTPermissions(source, false, 'police') then
-			cb(exports['pulsar-mdt']:VehiclesFlagsAdd(data.parent, data.doc, data.plate))
+			cb(plsr.MDT.Vehicles.Flags:Add(data.parent, data.doc, data.plate))
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:Delete:vehicle-flag", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:Delete:vehicle-flag", function(source, data, cb)
 		if CheckMDTPermissions(source, false, 'police') then
-			cb(exports['pulsar-mdt']:VehiclesFlagsRemove(data.parent, data.id, data.plate, data.removeRadarFlag))
+			cb(plsr.MDT.Vehicles.Flags:Remove(data.parent, data.id, data.plate, data.removeRadarFlag))
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:Update:vehicle-strikes", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:Update:vehicle-strikes", function(source, data, cb)
 		if CheckMDTPermissions(source, false, 'police') then
-			cb(exports['pulsar-mdt']:VehiclesUpdateStrikes(data.VIN, data.strikes))
+			cb(plsr.MDT.Vehicles:UpdateStrikes(data.VIN, data.strikes))
 		else
 			cb(false)
 		end

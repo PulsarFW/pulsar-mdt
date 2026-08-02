@@ -1,8 +1,10 @@
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/server.lua"))()
+
 local _predefined = {
 	injuredPerson = {
 		code = "10-47",
 		title = "Injured Person",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		blip = {
 			icon = 280,
@@ -100,7 +102,7 @@ local _predefined = {
 	caraccident = {
 		code = "10-50",
 		title = "Vehicle Accident",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		blip = {
 			icon = 620,
@@ -113,7 +115,7 @@ local _predefined = {
 	planeaccident = {
 		code = "10-50",
 		title = "Plane Crash",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		blip = {
 			icon = 307,
@@ -126,7 +128,7 @@ local _predefined = {
 	heliaccident = {
 		code = "10-50",
 		title = "Helicopter Accident",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		blip = {
 			icon = 64,
@@ -139,7 +141,7 @@ local _predefined = {
 	boataccident = {
 		code = "10-50",
 		title = "Boating Accident",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		blip = {
 			icon = 427,
@@ -152,7 +154,7 @@ local _predefined = {
 	call911 = {
 		code = "911",
 		title = "911 Call",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		blip = {
 			icon = 280,
@@ -165,7 +167,7 @@ local _predefined = {
 	call311 = {
 		code = "311",
 		title = "311 Call",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		blip = {
 			icon = 280,
@@ -178,7 +180,7 @@ local _predefined = {
 	call911anon = {
 		code = "911",
 		title = "911 Call",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		isAnon = true,
 		blip = {
@@ -192,7 +194,7 @@ local _predefined = {
 	call311anon = {
 		code = "311",
 		title = "311 Call",
-		type = { "police_alerts", "ems_alerts" },
+		type = {"police_alerts", "ems_alerts"},
 		isPanic = false,
 		isAnon = true,
 		blip = {
@@ -285,11 +287,11 @@ local _predefined = {
 }
 
 AddEventHandler("Job:Server:DutyAdd", function(dutyData, source, stateId, callsign)
-	exports['pulsar-mdt']:EmergencyAlertsOnDuty(dutyData, source, stateId, callsign)
+	plsr.EmergencyAlerts:OnDuty(dutyData, source, stateId, callsign)
 end)
 
 AddEventHandler("Job:Server:DutyRemove", function(dutyData, source, stateId)
-	exports['pulsar-mdt']:EmergencyAlertsOffDuty(dutyData, source, stateId)
+	plsr.EmergencyAlerts:OffDuty(dutyData, source, stateId)
 end)
 
 AddEventHandler("EmergencyAlerts:Server:ServerDoPredefined", function(src, type, description)
@@ -300,14 +302,14 @@ AddEventHandler("EmergencyAlerts:Server:ServerDoPredefined", function(src, type,
 
 	local coords = GetEntityCoords(GetPlayerPed(src))
 
-	local tpCoords = Player(src)?.state?.tpLocation
+	local tpCoords = plsr.State:Player(src).tpLocation
 	if tpCoords ~= nil then
 		coords = vector3(tpCoords.x, tpCoords.y, tpCoords.z)
 	end
 
-	exports["pulsar-core"]:ClientCallback(src, "EmergencyAlerts:GetStreetName", coords, function(location)
+	plsr.Callbacks:ClientCallback(src, "EmergencyAlerts:GetStreetName", coords, function(location)
 		if location ~= nil then
-			exports['pulsar-mdt']:EmergencyAlertsCreate(
+			plsr.EmergencyAlerts:Create(
 				data.code,
 				data.title,
 				data.type,
@@ -333,12 +335,12 @@ RegisterNetEvent("EmergencyAlerts:Server:DoPredefined", function(type, descripti
 		if _cds[source] ~= nil and _cds[source] > os.time() then
 			return
 		else
-			_cds[source] = os.time() + (60 * 2)
+			_cds[source] = os.time() + config.Alerts.injuredPersonCooldownSec
 		end
 	end
 
 	if data.isAnon then
-		exports['pulsar-mdt']:EmergencyAlertsCreate(
+		plsr.EmergencyAlerts:Create(
 			data.code,
 			data.title,
 			data.type,
@@ -352,15 +354,16 @@ RegisterNetEvent("EmergencyAlerts:Server:DoPredefined", function(type, descripti
 	else
 		local coords = GetEntityCoords(GetPlayerPed(src))
 
-		local tpCoords = Player(src)?.state?.tpLocation
+		local tpCoords = plsr.State:Player(src).tpLocation
 		if tpCoords then
 			coords = vector3(tpCoords.x, tpCoords.y, tpCoords.z)
 		elseif data.isArea then
-			coords = vector3(coords.x + math.random(-50, 50), coords.y + math.random(-50, 50), coords.z)
+			local r = config.Alerts.areaJitterRadius
+			coords = vector3(coords.x + math.random(-r, r), coords.y + math.random(-r, r), coords.z)
 		end
 
-		exports["pulsar-core"]:ClientCallback(src, "EmergencyAlerts:GetStreetName", coords, function(location)
-			exports['pulsar-mdt']:EmergencyAlertsCreate(
+		plsr.Callbacks:ClientCallback(src, "EmergencyAlerts:GetStreetName", coords, function(location)
+			plsr.EmergencyAlerts:Create(
 				data.code,
 				data.title,
 				data.type,
@@ -373,4 +376,56 @@ RegisterNetEvent("EmergencyAlerts:Server:DoPredefined", function(type, descripti
 			)
 		end)
 	end
+
+end)
+
+-- ---- Dispatch panel actions (from client/alerts/nui.lua's new NUI callbacks) - always available, no websocket
+-- required. Mirrors pulsar_ws/namespaces/mdtAlerts.js's socket.on(...) handlers as plain server events instead. ----
+
+RegisterNetEvent("EmergencyAlerts:Server:ChangeUnitType", function(job, primary, unitType)
+	plsr.EmergencyAlerts:ChangeUnitType(source, job, primary, unitType)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:ChangeAvailability", function(job, primary)
+	plsr.EmergencyAlerts:ChangeAvailability(source, job, primary)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:OperateUnder", function(job, primary, parentPrimary)
+	plsr.EmergencyAlerts:OperateUnder(source, job, primary, parentPrimary)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:BreakOffUnit", function(job, primary, parentPrimary)
+	plsr.EmergencyAlerts:BreakOffUnit(source, job, primary, parentPrimary)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:ChangeRadioChannel", function(channel)
+	plsr.EmergencyAlerts:ChangeRadioChannel(source, channel)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:ChangePursuitMode", function(mode)
+	plsr.EmergencyAlerts:ChangePursuitMode(source, mode)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:UpdateAlertUnits", function(alertId, units)
+	plsr.EmergencyAlerts:UpdateAlertUnits(source, alertId, units)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:RemoveAlert", function(alertId)
+	plsr.EmergencyAlerts:RemoveAlert(source, alertId)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:AddRadioInfo", function(radio, text)
+	plsr.EmergencyAlerts:AddRadioInfo(source, radio, text)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:UpdateRadioInfo", function(id, radio, text)
+	plsr.EmergencyAlerts:UpdateRadioInfo(source, id, radio, text)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:RemoveRadioInfo", function(id)
+	plsr.EmergencyAlerts:RemoveRadioInfo(source, id)
+end)
+
+RegisterNetEvent("EmergencyAlerts:Server:LogMessage", function(message)
+	plsr.EmergencyAlerts:LogMessage(source, message)
 end)

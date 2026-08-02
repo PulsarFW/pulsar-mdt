@@ -1,22 +1,24 @@
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
+
 function RegisterChatCommands()
-	exports["pulsar-chat"]:RegisterAdminCommand("setcallsign", function(source, args, rawCommand)
+	plsr.Chat:RegisterAdminCommand("setcallsign", function(source, args, rawCommand)
 		local newCallsign = args[2]
-		local target = exports['pulsar-characters']:FetchBySID(tonumber(args[1]))
+		local target = plsr.Fetch:SID(tonumber(args[1]))
 		if target ~= nil then
 			if
-				exports['pulsar-jobs']:HasJob(target:GetData("Source"), "police")
-				or exports['pulsar-jobs']:HasJob(target:GetData("Source"), "ems")
+				plsr.Jobs.Permissions:HasJob(target:GetData("Source"), "police")
+				or plsr.Jobs.Permissions:HasJob(target:GetData("Source"), "ems")
 			then
-				if exports['pulsar-mdt']:PeopleUpdate(-1, target:GetData("SID"), "Callsign", newCallsign) then
-					exports["pulsar-chat"]:SendSystemSingle(source, "Updated Callsign")
+				if plsr.MDT.People:Update(-1, target:GetData("SID"), "Callsign", newCallsign) then
+					plsr.Chat.Send.System:Single(source, "Updated Callsign")
 				else
-					exports["pulsar-chat"]:SendSystemSingle(source, "Error Updating Callsign")
+					plsr.Chat.Send.System:Single(source, "Error Updating Callsign")
 				end
 			else
-				exports["pulsar-chat"]:SendSystemSingle(source, "Target is not Emergency Personnel")
+				plsr.Chat.Send.System:Single(source, "Target is not Emergency Personnel")
 			end
 		else
-			exports["pulsar-chat"]:SendSystemSingle(source, "Invalid State ID")
+			plsr.Chat.Send.System:Single(source, "Invalid State ID")
 		end
 	end, {
 		help = "Assign a callsign to an emergency worker",
@@ -32,29 +34,32 @@ function RegisterChatCommands()
 		},
 	}, 2)
 
-	exports["pulsar-chat"]:RegisterAdminCommand("reclaimcallsign", function(source, args, rawCommand)
-		local callsign = args[1]
-		local result = MySQL.Sync.fetchAll('SELECT SID, User, First, Last FROM characters WHERE Callsign = @callsign', {
-			['@callsign'] = callsign
-		})
-
-		if result and #result > 0 then
-			local char = result[1]
-			MySQL.Sync.execute('UPDATE characters SET Callsign = @newCallsign WHERE Callsign = @callsign', {
-				['@newCallsign'] = false,
-				['@callsign'] = callsign
-			})
-
-			local fetchedChar = exports['pulsar-characters']:FetchBySID(char.SID)
-			if fetchedChar then
-				fetchedChar:SetData("Callsign", false)
+	plsr.Chat:RegisterAdminCommand("reclaimcallsign", function(source, args, rawCommand)
+		plsr.Database:Single("SELECT `id`, `data` FROM `characters` WHERE `callsign` = ? AND `deleted` = 0", { args[1] }, function(success, row)
+			if not success or row == nil then
+				plsr.Chat.Send.System:Single(source, "Nobody With That Callsign")
+				return
 			end
+			local ok, existing = pcall(json.decode, row.data)
+			if not ok or type(existing) ~= "table" then
+				plsr.Chat.Send.System:Single(source, "Nobody With That Callsign")
+				return
+			end
+			existing.Callsign = false
 
-			exports["pulsar-chat"]:SendSystemSingle(source,
-				string.format("Callsign Reclaimed From %s %s (%s)", char.First, char.Last, char.SID))
-		else
-			exports["pulsar-chat"]:SendSystemSingle(source, "Nobody With That Callsign")
-		end
+			plsr.Database:Update("UPDATE `characters` SET `data` = ?, `callsign` = NULL WHERE `id` = ?", { json.encode(existing), row.id }, function(updateSuccess)
+				if updateSuccess then
+					local char = plsr.Fetch:SID(existing.SID)
+					if char then
+						char:SetData("Callsign", false)
+					end
+
+					plsr.Chat.Send.System:Single(source, string.format("Callsign Reclaimed From %s %s (%s)", existing.First, existing.Last, existing.SID))
+				else
+					plsr.Chat.Send.System:Single(source, "Nobody With That Callsign")
+				end
+			end)
+		end)
 	end, {
 		help = "Force Reclaim a Callsign",
 		params = {
@@ -65,7 +70,7 @@ function RegisterChatCommands()
 		},
 	}, 1)
 
-	exports["pulsar-chat"]:RegisterCommand(
+	plsr.Chat:RegisterCommand(
 		"mdt",
 		function(source, args, rawCommand)
 			TriggerClientEvent("MDT:Client:Toggle", source)
@@ -90,13 +95,13 @@ function RegisterChatCommands()
 		}
 	)
 
-	exports["pulsar-chat"]:RegisterAdminCommand("addmdtsysadmin", function(source, args, rawCommand)
+	plsr.Chat:RegisterAdminCommand("addmdtsysadmin", function(source, args, rawCommand)
 		local targetStateId = math.tointeger(args[1])
-		local success = exports['pulsar-mdt']:PeopleUpdate(-1, targetStateId, "MDTSystemAdmin", true)
+		local success = plsr.MDT.People:Update(-1, targetStateId, "MDTSystemAdmin", true)
 		if success then
-			exports["pulsar-chat"]:SendSystemSingle(source, "Granted System Admin to State ID: " .. targetStateId)
+			plsr.Chat.Send.System:Single(source, "Granted System Admin to State ID: " .. targetStateId)
 		else
-			exports["pulsar-chat"]:SendSystemSingle(source, "Error Granting System Admin")
+			plsr.Chat.Send.System:Single(source, "Error Granting System Admin")
 		end
 	end, {
 		help = "Grant MDT System Admin [Danger!]",
@@ -108,13 +113,13 @@ function RegisterChatCommands()
 		},
 	}, 1)
 
-	exports["pulsar-chat"]:RegisterAdminCommand("removemdtsysadmin", function(source, args, rawCommand)
+	plsr.Chat:RegisterAdminCommand("removemdtsysadmin", function(source, args, rawCommand)
 		local targetStateId = math.tointeger(args[1])
-		local success = exports['pulsar-mdt']:PeopleUpdate(-1, targetStateId, "MDTSystemAdmin", false)
+		local success = plsr.MDT.People:Update(-1, targetStateId, "MDTSystemAdmin", false)
 		if success then
-			exports["pulsar-chat"]:SendSystemSingle(source, "Revoked System Admin from State ID: " .. targetStateId)
+			plsr.Chat.Send.System:Single(source, "Revoked System Admin from State ID: " .. targetStateId)
 		else
-			exports["pulsar-chat"]:SendSystemSingle(source, "Error Revoking System Admin")
+			plsr.Chat.Send.System:Single(source, "Error Revoking System Admin")
 		end
 	end, {
 		help = "Revoke MDT System Admin",
@@ -126,7 +131,32 @@ function RegisterChatCommands()
 		},
 	}, 1)
 
-	exports["pulsar-chat"]:RegisterCommand(
+	plsr.Chat:RegisterAdminCommand("testalert", function(source, args, rawCommand)
+		local coords = GetEntityCoords(GetPlayerPed(source))
+		plsr.Callbacks:ClientCallback(source, "EmergencyAlerts:GetStreetName", coords, function(location)
+			plsr.EmergencyAlerts:Create(
+				"TEST",
+				"Test Alert",
+				{ "police_alerts", "ems_alerts", "tow_alerts", "doc_alerts" },
+				location,
+				{ icon = "question", details = "Dispatched via /testalert" },
+				false,
+				{ icon = 280, size = 0.9, color = 1, duration = 120 },
+				nil,
+				false,
+				false
+			)
+
+			plsr.Chat.Send.System:Single(source, string.format(
+				"Test alert dispatched to the native dispatch panel (websocket mirror: %s)",
+				config.Alerts.Websocket and "ENABLED, check pulsar_ws for the mirrored event" or "DISABLED"
+			))
+		end)
+	end, {
+		help = "Fire a test dispatch alert - always hits the native panel, also mirrors to the websocket if config.Alerts.Websocket is enabled",
+	}, 1)
+
+	plsr.Chat:RegisterCommand(
 		"clearblips",
 		function(source, args, rawCommand)
 			TriggerClientEvent("EmergencyAlerts:Client:Clear", source)

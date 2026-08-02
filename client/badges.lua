@@ -1,26 +1,43 @@
+local config = load(LoadResourceFile(GetCurrentResourceName(), "config/shared.lua"))()
+
 local badgeEntity = 0
 local licenseEntity
 local inBadgeAnim = false
 
-local badgeModels = {
-	["lspd"] = `xrp_prop_pdbadge_1`,
-	["bcso"] = `xrp_prop_pdbadge_2`,
-	["safd"] = `xrp_prop_pdbadge_3`,
-	["doj"] = `xrp_prop_pdbadge_4`,
-	["sast"] = `xrp_prop_pdbadge_5`,
-	["guardius"] = `xrp_prop_pdbadge_6`,
-	-- ["corrections"] = `xrp_prop_pdbadge_7`,
-}
+local badgeModels = config.BadgeModels
+
+function CaptureHeadshotTxd(ped, timeoutMs)
+	timeoutMs = timeoutMs or 1500
+
+	local handle = RegisterPedheadshotTransparent(ped)
+	if not handle or handle == 0 then
+		handle = RegisterPedheadshot(ped)
+	end
+	if not handle or handle == 0 then
+		return nil, nil
+	end
+
+	local start = GetGameTimer()
+	while not IsPedheadshotReady(handle) or not IsPedheadshotValid(handle) do
+		if GetGameTimer() - start > timeoutMs then
+			UnregisterPedheadshot(handle)
+			return nil, nil
+		end
+		Wait(0)
+	end
+
+	return GetPedheadshotTxdString(handle), handle
+end
 
 function RegisterBadgeCallbacks()
-	exports["pulsar-core"]:RegisterClientCallback("MDT:Client:CanShowBadge", function(data, cb)
+	plsr.Callbacks:RegisterClientCallback("MDT:Client:CanShowBadge", function(data, cb)
 		if
 			not inBadgeAnim
 			and not _mdtOpen
-			and not LocalPlayer.state.doingAction
-			and not LocalPlayer.state.isDead
-			and not exports['pulsar-animations']:EmotesGet()
-			and IsPedOnFoot(LocalPlayer.state.ped)
+			and not plsr.State.flags.doingAction
+			and not plsr.State.flags.isDead
+			and not plsr.Animations.Emotes:Get()
+			and IsPedOnFoot(PlayerPedId())
 		then
 			StartBadgeAnim(data.Department)
 			Wait(2500)
@@ -31,14 +48,14 @@ function RegisterBadgeCallbacks()
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterClientCallback("MDT:Client:CanShowLicense", function(data, cb)
+	plsr.Callbacks:RegisterClientCallback("MDT:Client:CanShowLicense", function(data, cb)
 		if
 			not inBadgeAnim
 			and not _mdtOpen
-			and not LocalPlayer.state.doingAction
-			and not LocalPlayer.state.isDead
-			and not exports['pulsar-animations']:EmotesGet()
-			and IsPedOnFoot(LocalPlayer.state.ped)
+			and not plsr.State.flags.doingAction
+			and not plsr.State.flags.isDead
+			and not plsr.Animations.Emotes:Get()
+			and IsPedOnFoot(PlayerPedId())
 		then
 			StartLicenseAnim()
 			Wait(2500)
@@ -83,7 +100,7 @@ function StartBadgeAnim(department)
 	TaskPlayAnim(playerPed, 1.0, -1, -1, 50, 0, 0, 0, 0)
 	TaskPlayAnim(playerPed, "paper_1_rcm_alt1-7", "player_one_dual-7", 1.0, 1.0, -1, 50, 0, 0, 0, 0)
 
-	SetTimeout(11000, function()
+	Citizen.SetTimeout(11000, function()
 		StopBadgeAnim()
 	end)
 end
@@ -131,7 +148,7 @@ function StartLicenseAnim()
 	TaskPlayAnim(playerPed, 1.0, -1, -1, 50, 0, 0, 0, 0)
 	TaskPlayAnim(playerPed, "paper_1_rcm_alt1-7", "player_one_dual-7", 1.0, 1.0, -1, 50, 0, 0, 0, 0)
 
-	SetTimeout(11000, function()
+	Citizen.SetTimeout(11000, function()
 		StopLicenseAnim()
 	end)
 end
@@ -146,25 +163,25 @@ function StopLicenseAnim()
 end
 
 RegisterNetEvent("MDT:Client:ShowBadge", function(sender, data)
-	if not LocalPlayer.state.loggedIn or LocalPlayer.state.inventoryOpen then
+	if not plsr.State.flags.loggedIn or plsr.State.flags.inventoryOpen then
 		return
 	end
 
 	local senderClient = GetPlayerFromServerId(sender)
 
 	local isMe = false
-	if sender == LocalPlayer.state.ID then
+	if sender == plsr.State.flags.ID then
 		isMe = true
 	end
 
-	exports['pulsar-core']:LoggerTrace(
+	plsr.Logger:Trace(
 		"MDT/Badge",
 		string.format(
 			"Sender Source: %s; Sender Player: %s; My Source: %s; My Ped: %s",
 			sender,
 			senderClient,
-			LocalPlayer.state.ID,
-			LocalPlayer.state.ped
+			plsr.State.flags.ID,
+			PlayerPedId()
 		)
 	)
 
@@ -176,38 +193,46 @@ RegisterNetEvent("MDT:Client:ShowBadge", function(sender, data)
 		return
 	end
 
-	local myPed = LocalPlayer.state.ped
+	local myPed = PlayerPedId()
 	local senderPed = GetPlayerPed(senderClient)
 
 	if DoesEntityExist(senderPed) then
 		local dist = #(GetEntityCoords(senderPed) - GetEntityCoords(myPed))
 
-		if dist <= 4.0 and HasEntityClearLosToEntity(myPed, senderPed, 17) then
-			exports['pulsar-mdt']:BadgesOpen(data)
+		if dist <= config.Badges.viewDistance and HasEntityClearLosToEntity(myPed, senderPed, config.Badges.viewLosRadius) then
+			local txd, handle = CaptureHeadshotTxd(senderPed, 1500)
+			data.HeadshotTxd = txd
+			plsr.MDT.Badges:Open(data)
+
+			if handle then
+				Citizen.SetTimeout(10000, function()
+					UnregisterPedheadshot(handle)
+				end)
+			end
 		end
 	end
 end)
 
 RegisterNetEvent("MDT:Client:ShowLicense", function(sender, data)
-	if not LocalPlayer.state.loggedIn or LocalPlayer.state.inventoryOpen then
+	if not plsr.State.flags.loggedIn or plsr.State.flags.inventoryOpen then
 		return
 	end
 
 	local senderClient = GetPlayerFromServerId(sender)
 
 	local isMe = false
-	if sender == LocalPlayer.state.ID then
+	if sender == plsr.State.flags.ID then
 		isMe = true
 	end
 
-	exports['pulsar-core']:LoggerTrace(
+	plsr.Logger:Trace(
 		"MDT/Badge",
 		string.format(
 			"Sender Source: %s; Sender Player: %s; My Source: %s; My Ped: %s",
 			sender,
 			senderClient,
-			LocalPlayer.state.ID,
-			LocalPlayer.state.ped
+			plsr.State.flags.ID,
+			PlayerPedId()
 		)
 	)
 
@@ -219,14 +244,22 @@ RegisterNetEvent("MDT:Client:ShowLicense", function(sender, data)
 		return
 	end
 
-	local myPed = LocalPlayer.state.ped
+	local myPed = PlayerPedId()
 	local senderPed = GetPlayerPed(senderClient)
 
 	if DoesEntityExist(senderPed) then
 		local dist = #(GetEntityCoords(senderPed) - GetEntityCoords(myPed))
 
-		if dist <= 4.0 and HasEntityClearLosToEntity(myPed, senderPed, 17) then
-			exports['pulsar-mdt']:LicensesOpen(data)
+		if dist <= config.Badges.viewDistance and HasEntityClearLosToEntity(myPed, senderPed, config.Badges.viewLosRadius) then
+			local txd, handle = CaptureHeadshotTxd(senderPed, 1500)
+			data.HeadshotTxd = txd
+			plsr.MDT.Licenses:Open(data)
+
+			if handle then
+				Citizen.SetTimeout(10000, function()
+					UnregisterPedheadshot(handle)
+				end)
+			end
 		end
 	end
 end)

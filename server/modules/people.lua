@@ -24,198 +24,227 @@ local requiredCharacterData = {
 function GetCharacterVehiclesData(sid)
 	local p = promise.new()
 
-	local vehicles = MySQL.query.await("SELECT * FROM vehicles WHERE OwnerId = ?", { sid })
-	p:resolve(vehicles)
+	plsr.Database:Query("SELECT `data` FROM `vehicles` WHERE `owner_type` = 0 AND `owner_id` = ?", { tostring(sid) }, function(success, rows)
+		if not success then
+			p:resolve({})
+			return
+		end
+
+		local vehicles = {}
+		for k, row in ipairs(rows) do
+			local ok, v = pcall(json.decode, row.data)
+			if ok and type(v) == "table" then
+				table.insert(vehicles, { Type = v.Type, VIN = v.VIN, Make = v.Make, Model = v.Model, RegisteredPlate = v.RegisteredPlate })
+			end
+		end
+		p:resolve(vehicles)
+	end)
 
 	return Citizen.Await(p)
 end
 
-exports("PeopleSearchPeople", function(term)
-	local p = promise.new()
-	MySQL.query(
-		"SELECT SID, First, Last, DOB, Licenses FROM characters WHERE (CONCAT(First, ' ', Last) LIKE ? OR SID LIKE ?) AND (Deleted = 0 OR Deleted IS NULL) LIMIT 4",
-		{ "%" .. term .. "%", "%" .. term .. "%" },
-		function(results)
-			if not results then
+_MDT.People = {
+	Search = {
+		People = function(self, term)
+			local p = promise.new()
+			local like = "%" .. term .. "%"
+			plsr.Database:Query(
+				"SELECT `id`, `sid`, `data` FROM `characters` WHERE `deleted` = 0 AND (CONCAT(JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.First')), ' ', JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.Last'))) LIKE ? OR `sid` LIKE ?) LIMIT 12",
+				{ like, like },
+				function(success, rows)
+					if not success then
+						p:resolve(false)
+						return
+					end
+
+					local results = {}
+					for k, row in ipairs(rows) do
+						local ok, v = pcall(json.decode, row.data)
+						if ok and type(v) == "table" then
+							v._id = row.id
+							table.insert(results, v)
+						end
+					end
+					p:resolve(results)
+				end
+			)
+			return Citizen.Await(p)
+		end,
+	},
+	View = function(self, id, requireAllData)
+		-- 5 DB Calls Here But IDK what else to do
+		local SID = tonumber(id)
+		local p = promise.new()
+		plsr.Database:Single("SELECT `id`, `data` FROM `characters` WHERE `sid` = ? AND `deleted` = 0", { SID }, function(success, row)
+			if not success or row == nil then
 				p:resolve(false)
 				return
 			end
-			p:resolve(results)
-		end
-	)
-	return Citizen.Await(p)
-end)
-
-exports("PeopleView", function(id, requireAllData)
-	local SID = tonumber(id)
-
-	local character = MySQL.single.await(
-		"SELECT SID, User, First, Last, Gender, Origin, Jobs, DOB, Callsign, Phone, Licenses, Qualifications, Flags, MDTSystemAdmin, MDTHistory, MDTSuspension, Attorney, LastClockOn, TimeClockedOn FROM characters WHERE SID = ? AND (Deleted = 0 OR Deleted IS NULL)",
-		{ SID }
-	)
-
-	if not character then
-		return false
-	end
-
-	if character.Origin then
-		character.Origin = json.decode(character.Origin)
-	end
-	if character.Jobs then
-		character.Jobs = json.decode(character.Jobs)
-	end
-	if character.Licenses then
-		character.Licenses = json.decode(character.Licenses)
-	end
-	if character.Qualifications then
-		character.Qualifications = json.decode(character.Qualifications)
-		if type(character.Qualifications) == "table" and not character.Qualifications[1] then
-			local quals = {}
-			for k, v in pairs(character.Qualifications) do
-				table.insert(quals, k)
+			local ok, char = pcall(json.decode, row.data)
+			if not ok or type(char) ~= "table" then
+				p:resolve(false)
+				return
 			end
-			character.Qualifications = quals
-		elseif type(character.Qualifications) ~= "table" then
-			character.Qualifications = {}
-		end
-	end
-	if character.Flags then
-		character.Flags = json.decode(character.Flags)
-	end
-	if character.MDTHistory then
-		character.MDTHistory = json.decode(character.MDTHistory)
-	end
-	if character.MDTSuspension then
-		character.MDTSuspension = json.decode(character.MDTSuspension)
-	end
-	if character.LastClockOn then
-		character.LastClockOn = json.decode(character.LastClockOn)
-	end
-	if character.TimeClockedOn then
-		character.TimeClockedOn = json.decode(character.TimeClockedOn)
-	end
+			char._id = row.id
 
-	if requireAllData then
-		local vehicles = GetCharacterVehiclesData(SID)
-		local ownedBusinesses = {}
+			local historyRows = MySQL.query.await("SELECT `time`, `actor_sid`, `log` FROM `character_mdt_history` WHERE `sid` = ? ORDER BY `time` DESC", { SID })
+			local history = {}
+			for k, h in ipairs(historyRows) do
+				table.insert(history, { Time = h.time, Char = h.actor_sid, Log = h.log })
+			end
+			char.MDTHistory = history
 
-		if character.Jobs then
-			for k, v in ipairs(character.Jobs) do
-				local jobData = exports['pulsar-jobs']:Get(v.Id)
-				if jobData and jobData.Owner and jobData.Owner == character.SID then
-					table.insert(ownedBusinesses, v.Id)
+			if requireAllData then
+				local vehicles = GetCharacterVehiclesData(SID)
+				local ownedBusinesses = {}
+
+				if char.Jobs then
+					for k, v in ipairs(char.Jobs) do
+						local jobData = plsr.Jobs:Get(v.Id)
+						if jobData.Owner and jobData.Owner == char.SID then
+							table.insert(ownedBusinesses, v.Id)
+						end
+					end
 				end
+
+				local parole = MySQL.single.await("SELECT end, total, parole FROM character_parole WHERE SID = ?", {
+					SID
+				})
+
+				local chargesData = MySQL.query.await("SELECT SID, charges FROM mdt_reports_people WHERE sentenced = ? AND type = ? AND SID = ? AND expunged = ?", {
+					1,
+					"suspect",
+					SID,
+					0
+				})
+
+				local convictions = {}
+				for k,v in ipairs(chargesData) do
+					local c = json.decode(v.charges)
+					for _, ch in ipairs(c) do
+						table.insert(convictions, ch)
+					end
+				end
+
+				p:resolve({
+					data = char,
+					parole = parole,
+					convictions = convictions,
+					vehicles = vehicles,
+					ownedBusinesses = ownedBusinesses,
+				})
+			else
+				p:resolve(char)
 			end
+		end)
+		return Citizen.Await(p)
+	end,
+	Update = function(self, requester, id, key, value)
+		local p = promise.new()
+		local logVal = value
+		if type(value) == "table" then
+			logVal = json.encode(value)
 		end
 
-		local parole = MySQL.single.await("SELECT end, total, parole FROM character_parole WHERE SID = ?", { SID })
-
-		local chargesData = MySQL.query.await(
-			"SELECT SID, charges FROM mdt_reports_people WHERE sentenced = ? AND type = ? AND SID = ? AND expunged = ?",
-			{ 1, "suspect", SID, 0 }
-		)
-
-		local convictions = {}
-		for k, v in ipairs(chargesData) do
-			local c = json.decode(v.charges)
-			for _, ch in ipairs(c) do
-				table.insert(convictions, ch)
-			end
-		end
-
-		return {
-			data = character,
-			parole = parole,
-			convictions = convictions,
-			vehicles = vehicles,
-			ownedBusinesses = ownedBusinesses,
-		}
-	else
-		return character
-	end
-end)
-
-exports("PeopleUpdate", function(requester, id, key, value)
-	local logVal = value
-	if type(value) == "table" then
-		logVal = json.encode(value)
-	end
-
-	local currentHistory = MySQL.single.await("SELECT MDTHistory FROM characters WHERE SID = ?", { id })
-	local history = {}
-	if currentHistory and currentHistory.MDTHistory then
-		history = json.decode(currentHistory.MDTHistory) or {}
-	end
-
-	local newEntry = {
-		Time = (os.time() * 1000),
-		Char = requester == -1 and -1 or requester:GetData("SID"),
-		Log = requester == -1 and
-			string.format("System Updated Profile, Set %s To %s", key, logVal) or
-			string.format(
+		local actorSid, log
+		if requester == -1 then
+			actorSid = -1
+			log = string.format("System Updated Profile, Set %s To %s", key, logVal)
+		else
+			actorSid = requester:GetData("SID")
+			log = string.format(
 				"%s Updated Profile, Set %s To %s",
 				requester:GetData("First") .. " " .. requester:GetData("Last"),
 				key,
 				logVal
 			)
-	}
-	table.insert(history, newEntry)
-
-	local dbValue
-	if key == "MDTSystemAdmin" then
-		dbValue = (value == true or value == "true" or value == 1) and 1 or 0
-	elseif type(value) == "table" then
-		dbValue = json.encode(value)
-	else
-		dbValue = value
-	end
-
-	local success = MySQL.update.await(
-		"UPDATE characters SET " .. key .. " = ?, MDTHistory = ? WHERE SID = ?",
-		{ dbValue, json.encode(history), id }
-	)
-
-	if success then
-		local target = exports['pulsar-characters']:FetchBySID(id)
-		if target then
-			target:SetData(key, value)
 		end
 
-		if key == "Mugshot" then
-			exports.ox_inventory:UpdateGovIDMugshot(id, value)
-		end
-	end
+		plsr.Database:Single("SELECT `id`, `data` FROM `characters` WHERE `sid` = ? AND `deleted` = 0", { id }, function(success, row)
+			if not success or row == nil then
+				p:resolve(false)
+				return
+			end
+			local ok, existing = pcall(json.decode, row.data)
+			if not ok or type(existing) ~= "table" then
+				p:resolve(false)
+				return
+			end
+			existing[key] = value
 
-	return success
-end)
+			local sql = "UPDATE `characters` SET `data` = ?"
+			local params = { json.encode(existing) }
+			if key == "Callsign" then
+				sql = sql .. ", `callsign` = ?"
+				table.insert(params, value)
+			end
+			sql = sql .. " WHERE `id` = ?"
+			table.insert(params, row.id)
+
+			plsr.Database:Update(sql, params, function(updateSuccess)
+				if updateSuccess then
+					AddCharacterMDTHistory(id, actorSid, log)
+
+					local target = plsr.Fetch:SID(id)
+					if target then
+						target:SetData(key, value)
+					end
+
+					if key == "Mugshot" then
+						plsr.Inventory:UpdateGovIDMugshot(id, value)
+					end
+				end
+				p:resolve(updateSuccess)
+			end)
+		end)
+		return Citizen.Await(p)
+	end,
+}
 
 AddEventHandler("MDT:Server:RegisterCallbacks", function()
-	exports["pulsar-core"]:RegisterServerCallback("MDT:InputSearch:people", function(source, data, cb)
-		MySQL.query(
-			"SELECT SID, First, Last, DOB, Licenses FROM characters WHERE (CONCAT(First, ' ', Last) LIKE ? OR SID LIKE ?) AND (Deleted = 0 OR Deleted IS NULL) LIMIT 4",
-			{ "%" .. data.term .. "%", "%" .. data.term .. "%" },
-			function(results)
-				if type(results) == "table" then
-					cb(results)
-				else
+	plsr.Callbacks:RegisterServerCallback("MDT:InputSearch:people", function(source, data, cb)
+		local like = "%" .. data.term .. "%"
+		plsr.Database:Query(
+			"SELECT `data` FROM `characters` WHERE CONCAT(JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.First')), ' ', JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.Last'))) LIKE ? OR `sid` LIKE ? LIMIT 4",
+			{ like, like },
+			function(success, rows)
+				if not success then
 					cb({})
+					return
 				end
+
+				local results = {}
+				for k, row in ipairs(rows) do
+					local ok, v = pcall(json.decode, row.data)
+					if ok and type(v) == "table" then
+						table.insert(results, { SID = v.SID, First = v.First, Last = v.Last, DOB = v.DOB, Licenses = v.Licenses })
+					end
+				end
+				cb(results)
 			end
 		)
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:InputSearch:job", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:InputSearch:job", function(source, data, cb)
 		if CheckMDTPermissions(source, false) then
-			MySQL.query(
-				"SELECT SID, First, Last, Callsign FROM characters WHERE (CONCAT(First, ' ', Last) LIKE ? OR Callsign LIKE ? OR SID LIKE ?) AND Jobs LIKE ? AND (Deleted = 0 OR Deleted IS NULL) LIMIT 4",
-				{ "%" .. data.term .. "%", "%" .. data.term .. "%", "%" .. data.term .. "%", '%"Id":"' ..
-				data.job .. '"%' },
-				function(results)
-					if type(results) == "table" then
-						cb(results)
-					else
+			local like = "%" .. data.term .. "%"
+			plsr.Database:Query(
+				"SELECT `data` FROM `characters` WHERE JSON_CONTAINS(JSON_EXTRACT(`data`, '$.Jobs'), JSON_OBJECT('Id', ?), '$') AND (CONCAT(JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.First')), ' ', JSON_UNQUOTE(JSON_EXTRACT(`data`, '$.Last'))) LIKE ? OR `callsign` LIKE ? OR `sid` LIKE ?) LIMIT 4",
+				{ data.job, like, like, like },
+				function(success, rows)
+					if not success then
 						cb({})
+						return
 					end
+
+					local results = {}
+					for k, row in ipairs(rows) do
+						local ok, v = pcall(json.decode, row.data)
+						if ok and type(v) == "table" then
+							table.insert(results, { SID = v.SID, First = v.First, Last = v.Last, Callsign = v.Callsign })
+						end
+					end
+					cb(results)
 				end
 			)
 		else
@@ -223,50 +252,51 @@ AddEventHandler("MDT:Server:RegisterCallbacks", function()
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:InputSearchSID", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:InputSearchSID", function(source, data, cb)
 		if CheckMDTPermissions(source, false) then
-			MySQL.single(
-				"SELECT SID, First, Last, DOB, Licenses FROM characters WHERE SID = ? AND (Deleted = 0 OR Deleted IS NULL)",
-				{ tonumber(data.term) },
-				function(results)
-					if type(results) == "table" then
-						cb({ results })
-					else
-						cb({})
-					end
+			plsr.Database:Single("SELECT `data` FROM `characters` WHERE `sid` = ?", { tonumber(data.term) }, function(success, row)
+				if not success then
+					cb({})
+					return
 				end
-			)
+				if row == nil then
+					cb({})
+					return
+				end
+				local ok, v = pcall(json.decode, row.data)
+				if not ok or type(v) ~= "table" then
+					cb({})
+					return
+				end
+				cb({ { SID = v.SID, First = v.First, Last = v.Last, DOB = v.DOB, Licenses = v.Licenses } })
+			end)
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:Search:people", function(source, data, cb)
-		cb(exports['pulsar-mdt']:PeopleSearchPeople(data.term))
+	plsr.Callbacks:RegisterServerCallback("MDT:Search:people", function(source, data, cb)
+		cb(plsr.MDT.People.Search:People(data.term))
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:View:person", function(source, data, cb)
-		cb(exports['pulsar-mdt']:PeopleView(data, true))
+	plsr.Callbacks:RegisterServerCallback("MDT:View:person", function(source, data, cb)
+		cb(plsr.MDT.People:View(data, true))
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:Update:person", function(source, data, cb)
-		local char = exports['pulsar-characters']:FetchCharacterSource(source)
+	plsr.Callbacks:RegisterServerCallback("MDT:Update:person", function(source, data, cb)
+		local char = plsr.Fetch:CharacterSource(source)
 		if char and CheckMDTPermissions(source, false) and data.SID then
-			cb(exports['pulsar-mdt']:PeopleUpdate(char, data.SID, data.Key, data.Data))
+			cb(plsr.MDT.People:Update(char, data.SID, data.Key, data.Data))
 		else
 			cb(false)
 		end
 	end)
 
-	exports["pulsar-core"]:RegisterServerCallback("MDT:CheckCallsign", function(source, data, cb)
+	plsr.Callbacks:RegisterServerCallback("MDT:CheckCallsign", function(source, data, cb)
 		if CheckMDTPermissions(source, false) then
-			MySQL.single(
-				"SELECT SID, Callsign FROM characters WHERE Callsign = ? AND (Deleted = 0 OR Deleted IS NULL)",
-				{ data },
-				function(success, results)
-					cb(not success or not results)
-				end
-			)
+			plsr.Database:Scalar("SELECT COUNT(*) FROM `characters` WHERE `callsign` = ?", { data }, function(success, count)
+				cb(not success or count == 0)
+			end)
 		else
 			cb(false)
 		end
