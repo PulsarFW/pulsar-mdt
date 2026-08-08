@@ -29,7 +29,9 @@
 					{@render children()}
 				</div>
 				<div class="actions">
-					<button type="button" class="btn btn-ghost" onclick={onClose}>{closeLabel}</button>
+					{#if closeLabel}
+						<button type="button" class="btn btn-ghost" onclick={onClose}>{closeLabel}</button>
+					{/if}
 					<button type="button" class="btn btn-primary" onclick={onAccept}>{acceptLabel}</button>
 				</div>
 			</div>
