@@ -181,8 +181,8 @@
 	/* sits on the "San Andreas Republic" ID card texture */
 	.license {
 		position: relative;
-		width: 17vw;
-		max-width: 270px;
+		width: 19vw;
+		max-width: 320px;
 	}
 
 	.license-bg {
@@ -236,14 +236,17 @@
 	}
 
 	.license-info p {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2vh;
 		margin: 0.7vh 0;
 		font-size: 1.2vmin;
 	}
 
 	.license-info .label {
 		font-weight: 600;
+		font-size: 0.85vmin;
 		color: rgba(0, 0, 0, 0.6);
-		margin-right: 0.3em;
 	}
 
 	.license-info .value {
