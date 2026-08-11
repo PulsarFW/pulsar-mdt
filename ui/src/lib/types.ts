@@ -483,6 +483,8 @@ export interface DispatchAlert {
 	time: number;
 	client?: boolean;
 	onScreen?: boolean;
+	// true if this alert arrived via the pulsar_ws mirror socket
+	viaMirror?: boolean;
 }
 
 export interface DispatchCharacterRef {

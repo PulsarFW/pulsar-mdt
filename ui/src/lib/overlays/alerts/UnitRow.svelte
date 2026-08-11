@@ -108,7 +108,7 @@
 		{#if open}
 			<div class="popover" role="menu">
 				<div class="popover-title">Unit: {unit.primary}</div>
-				{#if unit.primary !== myUnitData?.primary && myUnitData?.operatingUnder === null && mySubUnits.length === 0}
+				{#if unit.primary !== myUnitData?.primary && myUnitData?.operatingUnder == null && mySubUnits.length === 0}
 					<button type="button" onclick={doOperateUnder}>Operate Under</button>
 				{/if}
 				{#if unit.primary !== myUnitData?.primary && myUnitData?.operatingUnder === unit.primary}

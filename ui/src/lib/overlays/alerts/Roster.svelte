@@ -12,7 +12,7 @@
 	};
 
 	const jobId = $derived(appState.govJob?.Id ?? '');
-	const unattachedUnits = $derived((type: string) => (alertsState.units[type] ?? []).filter((u) => u.operatingUnder === null));
+	const unattachedUnits = $derived((type: string) => (alertsState.units[type] ?? []).filter((u) => u.operatingUnder == null));
 </script>
 
 {#if appState.user && jobId === 'tow'}

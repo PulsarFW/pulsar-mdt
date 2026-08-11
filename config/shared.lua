@@ -1,6 +1,6 @@
 return {
 	Alerts = {
-		Websocket = true, -- also mirror dispatch/alerts to pulsar_ws for a companion website, in-game panel works either way
+		Websocket = false, -- also mirror dispatch/alerts to pulsar_ws for a companion website, in-game panel works either way
 		npcAlertChancePercent = 15, -- odds a nearby eligible npc/gunshot triggers a predefined alert
 		npcAlertMinDistance = 10.0,
 		npcAlertLosRadius = 17,

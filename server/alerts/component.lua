@@ -264,7 +264,7 @@ _pdAlerts = {
 			end
 
 			if config.Alerts.Websocket then
-				-- if the default "localhost" is used, it is actually replaced with the real server endpoint for the client on the client side (since the endpoint isn't known here)
+				-- must be set to a real, publicly-reachable wss:// address in server.cfg - this runs in the player's own NUI browser, "localhost" resolves to their machine, not this server
 				local url = GetConvar("WS_MDT_ALERTS_WSS", "http://localhost:4002/mdt-alerts")
 				local token = exports["pulsar_ws"]:generateSocketToken("mdt-alerts", {
 					source = source,

@@ -17,7 +17,7 @@
 	const hasAttaching = $derived(!alert.client && myUnit?.job !== 'prison' && myUnit?.job !== 'tow');
 
 	const allJobUnits = $derived(Object.values(alertsState.units).flat());
-	const unitOptions = $derived(allJobUnits.filter((u) => u.operatingUnder === null).sort((a, b) => Number(a.primary) - Number(b.primary)));
+	const unitOptions = $derived(allJobUnits.filter((u) => u.operatingUnder == null).sort((a, b) => Number(a.primary) - Number(b.primary)));
 
 	function styleClass(): string {
 		if (alert.style === 1) return 'type-1';

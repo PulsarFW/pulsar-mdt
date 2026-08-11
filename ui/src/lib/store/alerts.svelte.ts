@@ -34,11 +34,29 @@ function trimLog(log: DispatchLogEntry[]): DispatchLogEntry[] {
 	return log.length > 200 ? log.slice(log.length - 200) : log;
 }
 
-function addAlert(alert: DispatchAlert) {
+function addAlert(alert: DispatchAlert, viaMirror = false) {
 	const now = Date.now();
-	const normalized: DispatchAlert = { ...alert, attached: arr(alert.attached), onScreen: true, time: alert.time ?? now };
+	const normalized: DispatchAlert = { ...alert, attached: arr(alert.attached), onScreen: true, time: alert.time ?? now, viaMirror };
 	alertsState.alerts = [...alertsState.alerts.filter((a) => a.time >= now - 1800000 || a.attached.length > 0), normalized];
 	Nui.receiveAlert(normalized);
+}
+
+function applyAlertUnitsUpdate(id: string, units: (string | number)[]) {
+	alertsState.alerts = alertsState.alerts.map((a) => (a.id === id ? { ...a, attached: units as string[] } : a));
+
+	const mine = myCallsign();
+	const meAttached = mine !== null && units.includes(mine);
+	if (meAttached && !alertsState.attachedAlertIds.includes(id)) {
+		alertsState.attachedAlertIds = [...alertsState.attachedAlertIds, id];
+		Nui.assignedToAlert();
+	} else if (!meAttached && alertsState.attachedAlertIds.includes(id)) {
+		alertsState.attachedAlertIds = alertsState.attachedAlertIds.filter((x) => x !== id);
+	}
+}
+
+function applyAlertRemove(id: string) {
+	alertsState.alerts = alertsState.alerts.filter((a) => a.id !== id);
+	Nui.removeAlert(id);
 }
 
 let mirrorSocket: Socket | null = null;
@@ -54,10 +72,15 @@ function connectMirror(url: string, token: string) {
 		alertsState.socketConnected = false;
 	});
 	// best-effort inbound sync from a companion website MDT, if the server owner built one - purely additive
-	mirrorSocket.on('alert', (alert: DispatchAlert) => addAlert(alert));
+	mirrorSocket.on('alert', (alert: DispatchAlert) => addAlert(alert, true));
 	mirrorSocket.on('dispatchLog', (log: DispatchLogEntry) => {
 		alertsState.dispatchLog = trimLog([...alertsState.dispatchLog, log]);
 	});
+	mirrorSocket.on('init', (_tData: unknown, alerts: DispatchAlert[]) => {
+		for (const alert of arr<DispatchAlert>(alerts)) addAlert(alert, true);
+	});
+	mirrorSocket.on('alertUpdateUnits', (id: string, units: (string | number)[]) => applyAlertUnitsUpdate(id, units));
+	mirrorSocket.on('alertRemove', (id: string) => applyAlertRemove(id));
 }
 
 function disconnectMirror() {
@@ -72,7 +95,7 @@ export function handleAlertsMessage(type: string, data: Record<string, unknown>)
 			alertsState.showing = Boolean(data.state);
 			break;
 		case 'ADD_ALERT':
-			addAlert(data.alert as DispatchAlert);
+			addAlert(data.alert as DispatchAlert, false);
 			break;
 		case 'ALERTS_DISPATCH_INIT': {
 			const myUnit = data.myUnit as DispatchUnit;
@@ -84,7 +107,7 @@ export function handleAlertsMessage(type: string, data: Record<string, unknown>)
 				prison: arr(units.prison),
 				tow: arr(units.tow),
 			};
-			alertsState.alerts = arr<DispatchAlert>(data.alerts).map((a) => ({ ...a, attached: arr(a.attached) }));
+			alertsState.alerts = arr<DispatchAlert>(data.alerts).map((a) => ({ ...a, attached: arr(a.attached), viaMirror: false }));
 			alertsState.radioNames = arr(data.radioNames);
 			alertsState.dispatchLog = arr(data.dispatchLog);
 			alertsState.connected = true;
@@ -132,24 +155,11 @@ export function handleAlertsMessage(type: string, data: Record<string, unknown>)
 			break;
 		}
 		case 'ALERTS_ALERT_UPDATE_UNITS': {
-			const id = data.id as string;
-			const units = arr<string | number>(data.units);
-			alertsState.alerts = alertsState.alerts.map((a) => (a.id === id ? { ...a, attached: units as string[] } : a));
-
-			const mine = myCallsign();
-			const meAttached = mine !== null && units.includes(mine);
-			if (meAttached && !alertsState.attachedAlertIds.includes(id)) {
-				alertsState.attachedAlertIds = [...alertsState.attachedAlertIds, id];
-				Nui.assignedToAlert();
-			} else if (!meAttached && alertsState.attachedAlertIds.includes(id)) {
-				alertsState.attachedAlertIds = alertsState.attachedAlertIds.filter((x) => x !== id);
-			}
+			applyAlertUnitsUpdate(data.id as string, arr<string | number>(data.units));
 			break;
 		}
 		case 'ALERTS_ALERT_REMOVE': {
-			const id = data.id as string;
-			alertsState.alerts = alertsState.alerts.filter((a) => a.id !== id);
-			Nui.removeAlert(id);
+			applyAlertRemove(data.id as string);
 			break;
 		}
 		case 'ALERTS_RADIO_UPDATE':
@@ -207,13 +217,20 @@ export function changePursuitMode(mode: string | null): void {
 }
 
 export function updateAlertUnits(id: string, units: (string | number)[]): void {
-	Nui.alertsUpdateAlertUnits(id, units);
+	const alert = alertsState.alerts.find((a) => a.id === id);
+	if (alert?.viaMirror && mirrorSocket) {
+		mirrorSocket.emit('updateAlertUnits', id, units);
+	} else {
+		Nui.alertsUpdateAlertUnits(id, units);
+	}
 }
 
 export function removeAlert(alert: DispatchAlert): void {
 	if (alert.client) {
 		alertsState.alerts = alertsState.alerts.filter((a) => a.id !== alert.id);
 		Nui.removeAlert(alert.id);
+	} else if (alert.viaMirror && mirrorSocket) {
+		mirrorSocket.emit('removeAlert', alert.id);
 	} else {
 		Nui.alertsRemoveAlert(alert.id);
 	}
