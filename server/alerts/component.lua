@@ -243,7 +243,7 @@ _pdAlerts = {
 			local myAlerts = {}
 			for _, a in ipairs(_dispatchAlerts) do
 				if eligibleForAlert(emergencyAlertsData[source], resolveAlertGroups(a.type))
-					and (a.time >= (os.time() * 1000) - serverConfig.Alerts.recentAlertWindowMs or #a.attached > 0)
+					and (a.time >= (os.time() - serverConfig.Alerts.recentAlertWindowSec) * 1000 or #a.attached > 0)
 				then
 					table.insert(myAlerts, a)
 				end

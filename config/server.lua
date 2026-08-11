@@ -36,5 +36,6 @@ return {
 		injuredPersonCooldownSec = 120,
 		areaJitterRadius = 50, -- meters an "area" alert's coords get randomized by
 		trackerDisabledAlertDurationSec = 600, -- how long the "tracker disabled" blip stays up
+		recentAlertWindowSec = 900, -- 15 min - an alert is still "eligible" to a newly-on-duty unit within this window, regardless of attached units
 	},
 }
